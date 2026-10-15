@@ -155,8 +155,22 @@ def extract_and_modulate_audio(video_path, audio_wav, pitch_semitones=0.8):
         "-ac", "2",
         audio_wav
     ]
-    subprocess.run(cmd_audio, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    print(f"[AUDIO] Audio anti-copyright modulation complete: {audio_wav}")
+    res_audio = subprocess.run(cmd_audio, capture_output=True, text=True)
+    if not os.path.exists(audio_wav) or os.path.getsize(audio_wav) < 1000:
+        print("[AUDIO] Filter extraction failed or empty, trying direct audio copy...")
+        cmd_direct = [
+            FFMPEG_EXE, "-y",
+            "-i", video_path,
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", "44100",
+            "-ac", "2",
+            audio_wav
+        ]
+        subprocess.run(cmd_direct, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+    wav_size = os.path.getsize(audio_wav) if os.path.exists(audio_wav) else 0
+    print(f"[AUDIO] Audio anti-copyright modulation complete: {audio_wav} ({wav_size / 1024:.1f} KB)")
 
 def extract_video_assets(video_path, work_dir, meta):
     """Extracts anti-copyright audio and scaled frames from input video."""
@@ -915,12 +929,22 @@ def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=Non
         "-i", os.path.join(frames_dir, pattern)
     ]
     if has_audio:
-        cmd.extend(["-i", audio_wav, "-c:a", "aac", "-b:a", "192k", "-shortest"])
+        cmd.extend([
+            "-i", audio_wav,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", "44100",
+            "-ac", "2",
+            "-shortest"
+        ])
     else:
         cmd.extend(["-an"])
 
     cmd.extend([
         "-c:v", "libx264",
+        "-profile:v", "high",
         "-pix_fmt", "yuv420p",
         "-crf", "18",
         "-movflags", "+faststart",
@@ -942,7 +966,19 @@ def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=Non
         "-i", os.path.join(frames_dir, pattern)
     ]
     if has_audio:
-        cmd2.extend(["-i", audio_wav, "-c:a", "aac", "-shortest"])
+        cmd2.extend([
+            "-i", audio_wav,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", "44100",
+            "-ac", "2",
+            "-shortest"
+        ])
+    else:
+        cmd2.extend(["-an"])
+
     cmd2.extend([
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
@@ -958,10 +994,26 @@ def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=Non
         ffmpeg_bin, "-y",
         "-framerate", str(fps),
         "-start_number", "1",
-        "-i", os.path.join(frames_dir, pattern),
+        "-i", os.path.join(frames_dir, pattern)
+    ]
+    if has_audio:
+        cmd3.extend([
+            "-i", audio_wav,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", "44100",
+            "-ac", "2",
+            "-shortest"
+        ])
+    else:
+        cmd3.extend(["-an"])
+
+    cmd3.extend([
         "-pix_fmt", "yuv420p",
         out_video
-    ]
+    ])
     subprocess.run(cmd3, check=True)
     return True
 
