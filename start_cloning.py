@@ -82,6 +82,8 @@ def main():
             sys.exit(1)
         video_input = video_files[0]
 
+    generate_blend = "--blend" in sys.argv
+
     out_dir = os.path.join(workspace_dir, "output")
     cache_dir = os.path.join(workspace_dir, "cache")
     run_mr_perfect_pipeline(
@@ -89,7 +91,8 @@ def main():
         out_dir=out_dir,
         cache_dir=cache_dir,
         inpaint_mode=inpaint_mode,
-        resume=resume_flag
+        resume=resume_flag,
+        generate_blend=generate_blend
     )
 
 if __name__ == "__main__":

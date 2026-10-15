@@ -965,7 +965,7 @@ def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=Non
     subprocess.run(cmd3, check=True)
     return True
 
-def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_banner=None, inpaint_mode="lama", resume=True):
+def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_banner=None, inpaint_mode="lama", resume=True, generate_blend=False):
     t0 = time.time()
     base_proj_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if out_dir is None:
@@ -1124,10 +1124,13 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     grid_path = os.path.join(previews_dir, "mr_perfect_grid.jpg")
     generate_milestone_grid(out_perfect_dir, out_color_dir, grid_path, total_frames)
 
-    # Step 8: Build Blender 5.2 Project into blender/
+    # Step 8: Blender project generation (bypassed as requested by user)
     blend_path = os.path.join(blender_dir, "project.blend")
-    print("[BLENDER] Building Blender 5.2 project with multi-layer keyframe vector lines...")
-    build_blender_project(work_dir, blend_path, total_frames, meta['fps_int'], audio_wav, final_lines_video, kf_data_path)
+    if generate_blend:
+        print("[BLENDER] Building Blender project with multi-layer keyframe vector lines...")
+        build_blender_project(work_dir, blend_path, total_frames, meta['fps_int'], audio_wav, final_lines_video, kf_data_path)
+    else:
+        print("[BLENDER] Blender project generation skipped (Direct 2D video recreation mode active).")
 
     # Step 9: Save vector strokes JSON for export in metadata/
     splines_path = os.path.join(metadata_dir, "vector_strokes.json")
@@ -1136,17 +1139,20 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     # Step 10: Generate Execution Report in reports/
     t_total = time.time() - t0
     video_name = os.path.basename(video_path)
-    generate_report(reports_dir, total_frames, meta, meta['duration_sec'], final_lines_video, final_color_video, blend_path, grid_path, palette_path, t_total, video_name=video_name)
+    generate_report(reports_dir, total_frames, meta, meta['duration_sec'], final_lines_video, final_color_video, blend_path if generate_blend else "N/A", grid_path, palette_path, t_total, video_name=video_name)
 
     # Step 11: Copy core deliverables to root output/ for convenient access
-    for src, dst_name in [
+    copy_items = [
         (final_lines_video, "mr_perfect_lines.mp4"),
         (final_color_video, "mr_perfect_color.mp4"),
-        (blend_path, "project.blend"),
         (grid_path, "mr_perfect_grid.jpg"),
         (palette_path, "master_palette.json"),
         (os.path.join(reports_dir, "report.md"), "report.md")
-    ]:
+    ]
+    if generate_blend and os.path.exists(blend_path):
+        copy_items.append((blend_path, "project.blend"))
+
+    for src, dst_name in copy_items:
         try:
             shutil.copy2(src, os.path.join(out_dir, dst_name))
         except Exception:
