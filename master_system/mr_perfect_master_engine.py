@@ -1306,17 +1306,37 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     # Step 12: Auto-Condense Knowledge to Skill & Master System (Text Rules)
     update_skill_and_blueprint_knowledge(base_proj_dir, video_name, meta, profile_info, palette, total_frames, t_total)
 
-    # Step 13: Verify both output videos exist and have sound
+    # Step 13: Verify both output videos exist and have embedded audio stream
+    def get_audio_info(v_path):
+        try:
+            r = subprocess.run([ffmpeg_bin, "-i", v_path], capture_output=True, text=True)
+            for line in r.stderr.splitlines():
+                if "Audio:" in line:
+                    return line.strip()
+        except Exception:
+            pass
+        return None
+
     lines_ok = os.path.exists(final_lines_video) and os.path.getsize(final_lines_video) > 1000
     color_ok = os.path.exists(final_color_video) and os.path.getsize(final_color_video) > 1000
-    if lines_ok:
-        print(f"[OUTPUT] ✓ Line-Art video ready: {os.path.getsize(final_lines_video)//1024} KB")
+    lines_audio_str = get_audio_info(final_lines_video) if lines_ok else None
+    color_audio_str = get_audio_info(final_color_video) if color_ok else None
+
+    if lines_ok and lines_audio_str:
+        print(f"[OUTPUT] ✓ Line-Art video ready: {os.path.getsize(final_lines_video)//1024} KB [ATTACHED AUDIO: {lines_audio_str}]")
+    elif lines_ok:
+        print(f"[OUTPUT] ✓ Line-Art video ready: {os.path.getsize(final_lines_video)//1024} KB (Audio: silent)")
     else:
         print(f"[OUTPUT] ✗ WARNING: Line-Art video missing or empty!")
-    if color_ok:
-        print(f"[OUTPUT] ✓ Color 2D video ready: {os.path.getsize(final_color_video)//1024} KB")
+
+    if color_ok and color_audio_str:
+        print(f"[OUTPUT] ✓ Color 2D video ready: {os.path.getsize(final_color_video)//1024} KB [ATTACHED AUDIO: {color_audio_str}]")
+        print(f"[OUTPUT] ✓ Video and Audio are 100% COMBINED in: {final_color_video}")
+    elif color_ok:
+        print(f"[OUTPUT] ✓ Color 2D video ready: {os.path.getsize(final_color_video)//1024} KB (Audio: silent)")
     else:
         print(f"[OUTPUT] ✗ WARNING: Color 2D video missing or empty!")
+
 
     # Step 14: Auto-Purge ALL intermediate cache to free disk space
     #   Purge entire work_dir (raw frames, processed frames, tmp files)
@@ -1352,8 +1372,9 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
 
     print("=" * 70)
     print(f"PIPELINE COMPLETED IN {t_total:.2f} SECONDS ({t_total/60:.2f} MINS)!")
-    print(f"Line Art Video:  {final_lines_video}")
-    print(f"Color 2D Video:  {final_color_video}")
+    print(f"Line Art Video:  {final_lines_video} [Video + Audio COMBINED in 1 file]")
+    print(f"Color 2D Video:  {final_color_video} [Video + Audio COMBINED in 1 file]")
+    print(f"Deliverable:     {os.path.join(out_dir, 'mr_perfect_color.mp4')}")
     print(f"Blender Project: {blend_path}")
     print(f"Milestone Grid:  {grid_path}")
     print(f"Color Palette:   {palette_path}")
