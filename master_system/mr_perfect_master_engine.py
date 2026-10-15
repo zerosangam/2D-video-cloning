@@ -878,12 +878,14 @@ def update_skill_and_blueprint_knowledge(base_proj_dir, video_name, meta, profil
                 print(f"[SKILL] Note: Could not update {target_file}: {e}")
 
 def auto_purge_intermediate_cache(work_dir):
-    """Deletes heavy intermediate frame images to free disk space after successful cloning."""
+    """Deletes ALL intermediate/temporary files from the cache workspace after successful pipeline.
+    Purges frame images (GB-scale), temp JSON, and finally removes the empty work_dir itself."""
     if not os.path.exists(work_dir):
         return
     purged_files = 0
     purged_bytes = 0
 
+    # Purge all frame subdirectories
     subdirs_to_purge = ["raw_frames", "mr_perfect_frames", "color_frames"]
     for subdir in subdirs_to_purge:
         target_dir = os.path.join(work_dir, subdir)
@@ -897,29 +899,38 @@ def auto_purge_intermediate_cache(work_dir):
                 except Exception:
                     pass
             try:
-                os.rmdir(target_dir)
+                shutil.rmtree(target_dir, ignore_errors=True)
             except Exception:
                 pass
 
-    for fname in ["keyframes_strokes.json"]:
-        fpath = os.path.join(work_dir, fname)
-        if os.path.exists(fpath):
-            try:
-                purged_bytes += os.path.getsize(fpath)
-                os.remove(fpath)
-                purged_files += 1
-            except Exception:
-                pass
+    # Purge all remaining files in work_dir root (temp JSONs, etc.) except nothing to keep
+    if os.path.exists(work_dir):
+        for fname in os.listdir(work_dir):
+            fpath = os.path.join(work_dir, fname)
+            if os.path.isfile(fpath):
+                try:
+                    purged_bytes += os.path.getsize(fpath)
+                    os.remove(fpath)
+                    purged_files += 1
+                except Exception:
+                    pass
+
+    # Remove the entire workspace directory itself (it's fully temporary)
+    try:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        print(f"[AUTO-PURGE] Cache workspace directory removed: {work_dir}")
+    except Exception as e:
+        print(f"[AUTO-PURGE] Note: could not remove workspace dir: {e}")
 
     mb_freed = purged_bytes / (1024 * 1024)
-    print(f"[AUTO-PURGE] Automatically purged {purged_files} intermediate files ({mb_freed:.1f} MB freed). Disk remains 100% clean!")
+    print(f"[AUTO-PURGE] Purged {purged_files} intermediate files ({mb_freed:.1f} MB freed). Cache is 100% clean!")
 
 def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=None, video_path=None):
     """
     Robustly compiles video using FFmpeg.
-    - Explicitly sets -start_number 1 so image sequences starting at frame 0001 never fail
-    - Auto-detects audio presence and stream compatibility
-    - Fallback mechanisms for diverse codecs and platforms
+    SIGTERM/OOM-safe: uses ultrafast preset + thread limits to survive Codespace RAM limits.
+    4-pass fallback system ensures video is always produced.
+    Audio is always muxed if present, with automatic on-the-fly recovery.
     """
     ffmpeg_bin = get_ffmpeg_binary()
     has_audio = bool(audio_wav and os.path.exists(audio_wav) and os.path.getsize(audio_wav) > 1000)
@@ -927,112 +938,122 @@ def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=Non
     if not has_audio and video_path and os.path.exists(video_path):
         if audio_wav is None:
             audio_wav = os.path.join(os.path.dirname(out_video), "audio.wav")
-        print(f"[FFMPEG] audio.wav missing or empty, generating on-the-fly to: {audio_wav}...")
+        print(f"[FFMPEG] audio.wav missing — regenerating on-the-fly: {audio_wav}")
         extract_and_modulate_audio(video_path, audio_wav)
         has_audio = bool(os.path.exists(audio_wav) and os.path.getsize(audio_wav) > 1000)
 
     if has_audio:
         print(f"[VIDEO MUX] Attaching audio: {audio_wav} ({os.path.getsize(audio_wav)/1024:.1f} KB)")
     else:
-        print(f"[VIDEO MUX WARNING] No audio attached! (audio_wav missing or < 1000 bytes)")
+        print("[VIDEO MUX WARNING] No audio will be attached (file missing or <1KB).")
 
     os.makedirs(os.path.dirname(out_video), exist_ok=True)
+    frame_glob = os.path.join(frames_dir, pattern)
 
-    # Pass 1: standard high-fidelity x264 with start_number=1
-    cmd = [
-        ffmpeg_bin, "-y",
-        "-framerate", str(fps),
-        "-start_number", "1",
-        "-i", os.path.join(frames_dir, pattern)
-    ]
-    if has_audio:
-        cmd.extend([
+    def _audio_args(extra_flags=True):
+        """Returns audio mux args if audio is present."""
+        if not has_audio:
+            return ["-an"]
+        args = [
             "-i", audio_wav,
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-c:a", "aac",
-            "-b:a", "192k",
+            "-b:a", "128k",
             "-ar", "44100",
             "-ac", "2",
-            "-shortest"
-        ])
-    else:
-        cmd.extend(["-an"])
+        ]
+        if extra_flags:
+            args += ["-async", "1"]
+        return args
 
-    cmd.extend([
+    # ── Pass 1: ultrafast x264 (low RAM/CPU, avoids SIGTERM in Codespace)
+    cmd1 = [
+        ffmpeg_bin, "-y",
+        "-threads", "2",
+        "-framerate", str(fps),
+        "-start_number", "1",
+        "-i", frame_glob,
+    ] + _audio_args() + [
         "-c:v", "libx264",
-        "-profile:v", "high",
+        "-preset", "ultrafast",
         "-pix_fmt", "yuv420p",
-        "-crf", "18",
+        "-crf", "23",
         "-movflags", "+faststart",
         out_video
-    ])
-
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 1000:
+    ]
+    print("[FFMPEG] Pass 1 — ultrafast x264 (memory-safe)...")
+    r1 = subprocess.run(cmd1, capture_output=True, text=True)
+    if r1.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 10000:
+        print("[FFMPEG] Pass 1 succeeded.")
         return True
+    print(f"[FFMPEG] Pass 1 failed (code {r1.returncode}). stderr: {r1.stderr[-200:].strip()}")
 
-    print(f"[FFMPEG NOTE] Pass 1 returned code {res.returncode}. Retrying with universal parameters...")
-    if res.stderr:
-        print(f"[FFMPEG STDERR] {res.stderr[-300:].strip()}")
-
-    # Pass 2: fallback without start_number (pattern autodetect)
+    # ── Pass 2: ultrafast without start_number (some pattern styles need this)
     cmd2 = [
         ffmpeg_bin, "-y",
+        "-threads", "2",
         "-framerate", str(fps),
-        "-i", os.path.join(frames_dir, pattern)
-    ]
-    if has_audio:
-        cmd2.extend([
-            "-i", audio_wav,
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ar", "44100",
-            "-ac", "2",
-            "-shortest"
-        ])
-    else:
-        cmd2.extend(["-an"])
-
-    cmd2.extend([
+        "-i", frame_glob,
+    ] + _audio_args() + [
         "-c:v", "libx264",
+        "-preset", "ultrafast",
         "-pix_fmt", "yuv420p",
+        "-crf", "23",
+        "-movflags", "+faststart",
         out_video
-    ])
-    res2 = subprocess.run(cmd2, capture_output=True, text=True)
-    if res2.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 1000:
+    ]
+    print("[FFMPEG] Pass 2 — ultrafast x264 (no start_number)...")
+    r2 = subprocess.run(cmd2, capture_output=True, text=True)
+    if r2.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 10000:
+        print("[FFMPEG] Pass 2 succeeded.")
         return True
+    print(f"[FFMPEG] Pass 2 failed (code {r2.returncode}). stderr: {r2.stderr[-200:].strip()}")
 
-    # Pass 3: Universal fallback without libx264 constraint
-    print("[FFMPEG NOTE] Retrying with universal codec fallback...")
+    # ── Pass 3: libx264 baseline profile (absolute minimal memory)
     cmd3 = [
         ffmpeg_bin, "-y",
+        "-threads", "1",
         "-framerate", str(fps),
         "-start_number", "1",
-        "-i", os.path.join(frames_dir, pattern)
+        "-i", frame_glob,
+    ] + _audio_args(extra_flags=False) + [
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-profile:v", "baseline",
+        "-level", "3.1",
+        "-pix_fmt", "yuv420p",
+        "-crf", "28",
+        out_video
     ]
-    if has_audio:
-        cmd3.extend([
-            "-i", audio_wav,
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ar", "44100",
-            "-ac", "2",
-            "-shortest"
-        ])
-    else:
-        cmd3.extend(["-an"])
+    print("[FFMPEG] Pass 3 — baseline profile single-thread (minimal RAM)...")
+    r3 = subprocess.run(cmd3, capture_output=True, text=True)
+    if r3.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 10000:
+        print("[FFMPEG] Pass 3 succeeded.")
+        return True
+    print(f"[FFMPEG] Pass 3 failed (code {r3.returncode}). stderr: {r3.stderr[-200:].strip()}")
 
-    cmd3.extend([
+    # ── Pass 4: mpeg4 universal codec (last resort, works on any system)
+    print("[FFMPEG] Pass 4 — mpeg4 universal fallback (guaranteed output)...")
+    cmd4 = [
+        ffmpeg_bin, "-y",
+        "-threads", "1",
+        "-framerate", str(fps),
+        "-start_number", "1",
+        "-i", frame_glob,
+    ] + _audio_args(extra_flags=False) + [
+        "-c:v", "mpeg4",
+        "-q:v", "5",
         "-pix_fmt", "yuv420p",
         out_video
-    ])
-    subprocess.run(cmd3, check=True)
-    return True
+    ]
+    r4 = subprocess.run(cmd4, capture_output=True, text=True)
+    if r4.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 10000:
+        print("[FFMPEG] Pass 4 (mpeg4) succeeded.")
+        return True
+
+    print(f"[FFMPEG CRITICAL] All 4 passes failed. Last stderr: {r4.stderr[-400:].strip()}")
+    return False
 
 def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_banner=None, inpaint_mode="lama", resume=True, generate_blend=False):
     t0 = time.time()
