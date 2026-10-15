@@ -1,12 +1,12 @@
 """
 ================================================================================
-MR. PERFECT AI 2D MASTER STUDIO ENGINE (v9.0 LAMA AI ZERO-BLUR EDITION)
+MR. PERFECT AI 2D MASTER STUDIO ENGINE (v10.0 UNIVERSAL WATERMARK ZERO-BLUR)
 ================================================================================
 Comprehensive High-Fidelity 2D Video Recreation Pipeline:
-1. LAMA AI ZERO-BLUR Watermark Removal: Samsung LaMA Deep Learning inpainting.
-   100% elimination of watermarks, text overlays, and logos with zero smudge.
-2. Original Watermark Purged: Original @ricoanimations / channel watermarks
-   are strictly ignored and never cloned.
+1. UNIVERSAL Watermark Removal: 4-signal temporal AI analysis detects watermarks
+   ANYWHERE in the frame — top, bottom, corners, center, any channel/platform.
+   Zero hardcoded positions. LaMA Deep Learning inpainting for zero-smudge removal.
+2. Any Channel/Platform: Works on TikTok, YouTube Shorts, Reels, any 9:16 content.
 3. Video Editing Text Purged: Top banner text is completely removed.
 4. User Logo 'zero': Crisp vector line art on dedicated Blender Grease Pencil layer.
 5. Audio Anti-Copyright: Pitch +0.8 Semitone Shift with Exact 1.00x Zero Speed Change.
@@ -322,19 +322,39 @@ def bridge_endpoints_in_box(skel, bx1, by1, bx2, by2, max_dist=24):
             connected.add(best_j)
     return skel
 
-def profile_video_universal(frames_dir, total_frames, sample_count=30):
+def profile_video_universal(frames_dir, total_frames, sample_count=35):
     """
-    Universal Autonomous Video Profiler:
-    1. Evaluates multi-frame 90th percentile to reveal persistent background & overlay features.
-    2. Distinguishes opaque artwork drawings from semi-transparent digital overlays (0% false positives).
-    3. Identifies persistent static overlay watermarks (channel handles, logos).
-    4. Reconstructs sub-pixel full-canvas watermark mask (Zero-Box).
+    Universal Autonomous Video Profiler (v4.0 UNIVERSAL):
+    Uses 4-signal temporal analysis to detect watermarks ANYWHERE in the frame:
+    1. Temporal STD: low-variance regions = persistent overlays
+    2. p90–median difference: sticky bright overlays stand out
+    3. Laplacian persistence: static sharp edges = text/logo
+    4. Gradient-magnitude consistency: logos have consistent gradients
+
+    Zero hardcoded positions — works for TikTok/YouTube/Reels/any channel.
     Returns: (full_wm_mask, wm_boxes, has_top_banner)
     """
+    try:
+        from engine.watermark_cleaner import detect_watermark_universal
+    except ImportError:
+        detect_watermark_universal = None
+
     frame_files = sorted([f for f in os.listdir(frames_dir) if f.endswith(".jpg") or f.endswith(".png")])
     if not frame_files:
         return np.zeros((1920, 1080), dtype=np.uint8), [], False
 
+    # ── Run universal detector ──────────────────────────────────────
+    if detect_watermark_universal is not None:
+        result = detect_watermark_universal(frames_dir, total_frames, sample_count=sample_count)
+        merged_boxes = result.get("boxes", [])
+        full_wm_mask = result.get("full_mask")
+        if full_wm_mask is None:
+            full_wm_mask = np.zeros((1920, 1080), dtype=np.uint8)
+    else:
+        merged_boxes = []
+        full_wm_mask = np.zeros((1920, 1080), dtype=np.uint8)
+
+    # ── Also run legacy p90 pass to catch any missed zones ─────────
     sample_indices = np.linspace(0, len(frame_files) - 1, min(sample_count, len(frame_files)), dtype=int)
     sample_imgs = []
     for idx in sample_indices:
@@ -346,78 +366,60 @@ def profile_video_universal(frames_dir, total_frames, sample_count=30):
             img = cv2.resize(img, (1080, 1920))
         sample_imgs.append(img)
 
-    if not sample_imgs:
-        return np.zeros((1920, 1080), dtype=np.uint8), [], False
+    has_top_banner = False
+    if sample_imgs:
+        p90 = np.percentile(np.array(sample_imgs), 90, axis=0).astype(np.uint8)
+        p90_gray = cv2.cvtColor(p90, cv2.COLOR_BGR2GRAY)
+        med = cv2.medianBlur(p90_gray, 21)
+        diff = cv2.subtract(p90_gray, med)
 
-    p90 = np.percentile(np.array(sample_imgs), 90, axis=0).astype(np.uint8)
-    p90_gray = cv2.cvtColor(p90, cv2.COLOR_BGR2GRAY)
-    med = cv2.medianBlur(p90_gray, 21)
-    diff = cv2.subtract(p90_gray, med)
+        # Top banner check
+        has_top_banner = bool(np.mean(diff[0:240, :] >= 4) > 0.015)
 
-    # 1. Top banner check (y < 240)
-    has_top_banner = bool(np.mean(diff[0:240, :] >= 4) > 0.015)
+        # Legacy connected-component pass over entire frame (no hardcoded zones)
+        text_cand = (diff >= 8).astype(np.uint8) * 255
+        k_w = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5))
+        closed_leg = cv2.morphologyEx(text_cand, cv2.MORPH_CLOSE, k_w)
+        num, labels_l, stats_l, _ = cv2.connectedComponentsWithStats(closed_leg)
 
-    # 2. Watermark candidate scanning:
-    # Use diff >= 8 to eliminate paper noise, shadows, and fine sketch textures
-    text_cand = (diff >= 8).astype(np.uint8) * 255
-    text_cand[1880:, :] = 0
+        for i in range(1, num):
+            x = stats_l[i, cv2.CC_STAT_LEFT]
+            y = stats_l[i, cv2.CC_STAT_TOP]
+            bw = stats_l[i, cv2.CC_STAT_WIDTH]
+            bh = stats_l[i, cv2.CC_STAT_HEIGHT]
+            area = stats_l[i, cv2.CC_STAT_AREA]
 
-    k_w = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5))
-    closed = cv2.morphologyEx(text_cand, cv2.MORPH_CLOSE, k_w)
+            # Wide text handle OR squarish logo — both valid at ANY position
+            is_handle = (bw >= 120) and (10 <= bh <= 160) and (800 <= area <= 50000)
+            is_logo = (300 <= area <= 80000) and (bw <= 400) and (bh <= 400) and (bw / max(1, bh) > 0.3)
 
-    num, labels, stats, centroids = cv2.connectedComponentsWithStats(closed)
-    detected_boxes = []
+            if is_handle or is_logo:
+                new_box = (max(0, x - 18), max(0, y - 12), min(1080, x + bw + 18), min(1920, y + bh + 12))
+                # Add only if not already covered by universal detector result
+                nx1, ny1, nx2, ny2 = new_box
+                already_covered = any(
+                    not (nx2 < bx1 - 20 or nx1 > bx2 + 20 or ny2 < by1 - 20 or ny1 > by2 + 20)
+                    for (bx1, by1, bx2, by2) in merged_boxes
+                )
+                if not already_covered:
+                    merged_boxes.append(new_box)
 
-    for i in range(1, num):
-        x = stats[i, cv2.CC_STAT_LEFT]
-        y = stats[i, cv2.CC_STAT_TOP]
-        w = stats[i, cv2.CC_STAT_WIDTH]
-        h = stats[i, cv2.CC_STAT_HEIGHT]
-        area = stats[i, cv2.CC_STAT_AREA]
-        # Text handles: wide horizontal strings (w >= 150, h between 12 and 140, area between 1200 and 40000)
-        # Or corner logos: in corner zones with area between 600 and 60000 and bounded width/height (w <= 350, h <= 300)
-        is_corner = (x < 250 or x + w > 830) and (y < 350 or y + h > 1600) and (600 <= area <= 60000) and (w <= 350) and (h <= 300)
-        is_handle = (w >= 150) and (12 <= h <= 140) and (1200 <= area <= 40000)
+        # Merge newly added boxes with existing ones
+        from engine.watermark_cleaner import _merge_boxes
+        merged_boxes = _merge_boxes(merged_boxes, gap=30)
 
-        if is_handle or is_corner:
-            detected_boxes.append((max(0, x - 15), max(0, y - 10), min(1080, x + w + 15), min(1920, y + h + 10)))
+        # Update full mask with newly added zones
+        for (bx1, by1, bx2, by2) in merged_boxes:
+            sub_diff = diff[by1:by2, bx1:bx2]
+            sub_mask = (sub_diff >= 3).astype(np.uint8) * 255
+            sub_dil = cv2.dilate(sub_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4)))
+            full_wm_mask[by1:by2, bx1:bx2] = np.maximum(full_wm_mask[by1:by2, bx1:bx2], sub_dil)
 
-    # Guarantee detection for known handle zones and persistent text difference regions
-    candidate_zones = [
-        (230, 140, 680, 260),   # Top text overlay ("me at 1:00 am", meme captions)
-        (330, 910, 730, 990),   # Upper-middle handle zone
-        (280, 1100, 700, 1230), # Lower-middle handle zone (@ricoanimations)
-        (300, 1300, 760, 1420), # Lower handle zone (@ricoanimations in 9:16 reels)
-    ]
-    for cx1, cy1, cx2, cy2 in candidate_zones:
-        if np.count_nonzero(diff[cy1:cy2, cx1:cx2] >= 3) > 800:
-            if not any(not (bx2 < cx1 or bx1 > cx2 or by2 < cy1 or by1 > cy2) for (bx1, by1, bx2, by2) in detected_boxes):
-                detected_boxes.append((cx1, cy1, cx2, cy2))
-
-    # Merge overlapping/adjacent watermark boxes
-    merged_boxes = []
-    for box in detected_boxes:
-        bx1, by1, bx2, by2 = box
-        merged = False
-        for m_idx, (mx1, my1, mx2, my2) in enumerate(merged_boxes):
-            if not (bx2 < mx1 - 25 or bx1 > mx2 + 25 or by2 < my1 - 25 or by1 > my2 + 25):
-                merged_boxes[m_idx] = (min(bx1, mx1), min(by1, my1), max(bx2, mx2), max(by2, my2))
-                merged = True
-                break
-        if not merged:
-            merged_boxes.append(box)
-
-    # Reconstruct single full-canvas sub-pixel text mask (Zero-Box)
-    full_wm_mask = np.zeros((1920, 1080), dtype=np.uint8)
-    for (bx1, by1, bx2, by2) in merged_boxes:
-        sub_diff = diff[by1:by2, bx1:bx2]
-        sub_mask = (sub_diff >= 3).astype(np.uint8) * 255
-        sub_dil = cv2.dilate(sub_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4)))
-        full_wm_mask[by1:by2, bx1:bx2] = np.maximum(full_wm_mask[by1:by2, bx1:bx2], sub_dil)
-
-    print(f"[PROFILER] Identified {len(merged_boxes)} verified watermark zone(s): {merged_boxes} ({np.count_nonzero(full_wm_mask)} sub-pixel text mask pixels)")
+    pixel_count = np.count_nonzero(full_wm_mask)
+    print(f"[PROFILER] Identified {len(merged_boxes)} verified watermark zone(s): {merged_boxes} ({pixel_count} sub-pixel text mask pixels)")
     if has_top_banner:
         print("[PROFILER] Static top banner overlay text detected.")
+
     return full_wm_mask, merged_boxes, has_top_banner
 
 def process_single_frame_zero_blur(f_idx, in_dir, out_perfect_dir, out_color_dir, full_wm_mask=None, wm_boxes=None, purge_top_banner=False, lama_model=None):
