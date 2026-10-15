@@ -172,14 +172,19 @@ def extract_and_modulate_audio(video_path, audio_wav, pitch_semitones=0.8):
     wav_size = os.path.getsize(audio_wav) if os.path.exists(audio_wav) else 0
     print(f"[AUDIO] Audio anti-copyright modulation complete: {audio_wav} ({wav_size / 1024:.1f} KB)")
 
-def extract_video_assets(video_path, work_dir, meta):
+def extract_video_assets(video_path, work_dir, meta, audio_wav=None):
     """Extracts anti-copyright audio and scaled frames from input video."""
     os.makedirs(work_dir, exist_ok=True)
     frames_dir = os.path.join(work_dir, "raw_frames")
     os.makedirs(frames_dir, exist_ok=True)
-    audio_wav = os.path.join(work_dir, "audio.wav")
+    if audio_wav is None:
+        audio_wav = os.path.join(work_dir, "audio.wav")
+    os.makedirs(os.path.dirname(audio_wav), exist_ok=True)
 
-    extract_and_modulate_audio(video_path, audio_wav, pitch_semitones=0.8)
+    if not os.path.exists(audio_wav) or os.path.getsize(audio_wav) < 1000:
+        extract_and_modulate_audio(video_path, audio_wav, pitch_semitones=0.8)
+    else:
+        print(f"[AUDIO] Existing modulated audio verified: {audio_wav} ({os.path.getsize(audio_wav)/1024:.1f} KB)")
 
     # Clean existing frames if video changed or has newer timestamp
     existing_frames = sorted([f for f in os.listdir(frames_dir) if f.endswith(".jpg") or f.endswith(".png")])
@@ -896,7 +901,7 @@ def auto_purge_intermediate_cache(work_dir):
             except Exception:
                 pass
 
-    for fname in ["audio.wav", "keyframes_strokes.json"]:
+    for fname in ["keyframes_strokes.json"]:
         fpath = os.path.join(work_dir, fname)
         if os.path.exists(fpath):
             try:
@@ -909,7 +914,7 @@ def auto_purge_intermediate_cache(work_dir):
     mb_freed = purged_bytes / (1024 * 1024)
     print(f"[AUTO-PURGE] Automatically purged {purged_files} intermediate files ({mb_freed:.1f} MB freed). Disk remains 100% clean!")
 
-def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=None):
+def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=None, video_path=None):
     """
     Robustly compiles video using FFmpeg.
     - Explicitly sets -start_number 1 so image sequences starting at frame 0001 never fail
@@ -918,6 +923,18 @@ def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=Non
     """
     ffmpeg_bin = get_ffmpeg_binary()
     has_audio = bool(audio_wav and os.path.exists(audio_wav) and os.path.getsize(audio_wav) > 1000)
+
+    if not has_audio and video_path and os.path.exists(video_path):
+        if audio_wav is None:
+            audio_wav = os.path.join(os.path.dirname(out_video), "audio.wav")
+        print(f"[FFMPEG] audio.wav missing or empty, generating on-the-fly to: {audio_wav}...")
+        extract_and_modulate_audio(video_path, audio_wav)
+        has_audio = bool(os.path.exists(audio_wav) and os.path.getsize(audio_wav) > 1000)
+
+    if has_audio:
+        print(f"[VIDEO MUX] Attaching audio: {audio_wav} ({os.path.getsize(audio_wav)/1024:.1f} KB)")
+    else:
+        print(f"[VIDEO MUX WARNING] No audio attached! (audio_wav missing or < 1000 bytes)")
 
     os.makedirs(os.path.dirname(out_video), exist_ok=True)
 
@@ -1030,14 +1047,16 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
 
     # Establish clean dedicated deliverable directories (NO duplicate root files)
     videos_dir = os.path.join(out_dir, "videos")
+    audio_dir = os.path.join(out_dir, "audio")
     blender_dir = os.path.join(out_dir, "blender")
     previews_dir = os.path.join(out_dir, "previews")
     metadata_dir = os.path.join(out_dir, "metadata")
     reports_dir = os.path.join(out_dir, "reports")
 
-    for d in [videos_dir, blender_dir, previews_dir, metadata_dir, reports_dir]:
+    for d in [videos_dir, audio_dir, blender_dir, previews_dir, metadata_dir, reports_dir]:
         os.makedirs(d, exist_ok=True)
 
+    audio_wav = os.path.join(audio_dir, "audio.wav")
     work_dir = os.path.join(cache_dir, "current_video_workspace")
     os.makedirs(work_dir, exist_ok=True)
 
@@ -1049,8 +1068,8 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     meta = probe_video_stream(video_path)
     print(f"[PROBE] Video detected: {meta['orig_width']}x{meta['orig_height']} -> 1080x1920 @ {meta['fps']} FPS ({meta['duration_sec']}s)")
 
-    # Step 1: Ingestion & Anti-Copyright Audio Modulation
-    frames_dir, audio_wav, total_frames = extract_video_assets(video_path, work_dir, meta)
+    # Step 1: Ingestion & Anti-Copyright Audio Modulation (Saved in output/audio/)
+    frames_dir, audio_wav, total_frames = extract_video_assets(video_path, work_dir, meta, audio_wav=audio_wav)
 
     # Step 2: Universal Autonomous Video Profiler
     print("[PROFILER] Running Universal Autonomous Video Profiler...")
@@ -1164,12 +1183,12 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     # Step 6: Mux Final Videos (Dual: Line-Art + Full-Color) into videos/
     final_lines_video = os.path.join(videos_dir, "mr_perfect_lines.mp4")
     print(f"[VIDEO] Compiling Line-Art video at {meta['fps']} FPS...")
-    compile_video_from_frames(out_perfect_dir, "perfect_frame_%04d.png", final_lines_video, meta['fps'], audio_wav=audio_wav)
+    compile_video_from_frames(out_perfect_dir, "perfect_frame_%04d.png", final_lines_video, meta['fps'], audio_wav=audio_wav, video_path=video_path)
     print(f"[VIDEO] Compiled Line-Art Video: {final_lines_video}")
 
     final_color_video = os.path.join(videos_dir, "mr_perfect_color.mp4")
     print(f"[VIDEO] Compiling Full-Color 2D video at {meta['fps']} FPS...")
-    compile_video_from_frames(out_color_dir, "color_frame_%04d.png", final_color_video, meta['fps'], audio_wav=audio_wav)
+    compile_video_from_frames(out_color_dir, "color_frame_%04d.png", final_color_video, meta['fps'], audio_wav=audio_wav, video_path=video_path)
     print(f"[VIDEO] Compiled Full-Color Video: {final_color_video}")
 
     # Step 7: Generate Milestone Grid into previews/
@@ -1197,6 +1216,7 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     copy_items = [
         (final_lines_video, "mr_perfect_lines.mp4"),
         (final_color_video, "mr_perfect_color.mp4"),
+        (audio_wav, "audio.wav"),
         (grid_path, "mr_perfect_grid.jpg"),
         (palette_path, "master_palette.json"),
         (os.path.join(reports_dir, "report.md"), "report.md")
