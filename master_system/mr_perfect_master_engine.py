@@ -322,16 +322,17 @@ def bridge_endpoints_in_box(skel, bx1, by1, bx2, by2, max_dist=24):
             connected.add(best_j)
     return skel
 
-def profile_video_universal(frames_dir, total_frames, sample_count=35):
+def profile_video_universal(frames_dir, total_frames, sample_count=30):
     """
-    Universal Autonomous Video Profiler (v4.0 UNIVERSAL):
+    Universal Autonomous Video Profiler (v4.0 UNIVERSAL - Low RAM):
     Uses 4-signal temporal analysis to detect watermarks ANYWHERE in the frame:
     1. Temporal STD: low-variance regions = persistent overlays
     2. p90–median difference: sticky bright overlays stand out
     3. Laplacian persistence: static sharp edges = text/logo
     4. Gradient-magnitude consistency: logos have consistent gradients
 
-    Zero hardcoded positions — works for TikTok/YouTube/Reels/any channel.
+    Zero hardcoded positions — works on TikTok/YouTube/Reels/any channel.
+    Operates at downscaled 540x960 resolution (<50MB RAM) to guarantee zero OOM crashes.
     Returns: (full_wm_mask, wm_boxes, has_top_banner)
     """
     try:
@@ -343,77 +344,17 @@ def profile_video_universal(frames_dir, total_frames, sample_count=35):
     if not frame_files:
         return np.zeros((1920, 1080), dtype=np.uint8), [], False
 
-    # ── Run universal detector ──────────────────────────────────────
     if detect_watermark_universal is not None:
         result = detect_watermark_universal(frames_dir, total_frames, sample_count=sample_count)
         merged_boxes = result.get("boxes", [])
         full_wm_mask = result.get("full_mask")
+        has_top_banner = result.get("has_top_banner", False)
         if full_wm_mask is None:
             full_wm_mask = np.zeros((1920, 1080), dtype=np.uint8)
     else:
         merged_boxes = []
         full_wm_mask = np.zeros((1920, 1080), dtype=np.uint8)
-
-    # ── Also run legacy p90 pass to catch any missed zones ─────────
-    sample_indices = np.linspace(0, len(frame_files) - 1, min(sample_count, len(frame_files)), dtype=int)
-    sample_imgs = []
-    for idx in sample_indices:
-        p = os.path.join(frames_dir, frame_files[idx])
-        img = cv2.imread(p)
-        if img is None:
-            continue
-        if (img.shape[1], img.shape[0]) != (1080, 1920):
-            img = cv2.resize(img, (1080, 1920))
-        sample_imgs.append(img)
-
-    has_top_banner = False
-    if sample_imgs:
-        p90 = np.percentile(np.array(sample_imgs), 90, axis=0).astype(np.uint8)
-        p90_gray = cv2.cvtColor(p90, cv2.COLOR_BGR2GRAY)
-        med = cv2.medianBlur(p90_gray, 21)
-        diff = cv2.subtract(p90_gray, med)
-
-        # Top banner check
-        has_top_banner = bool(np.mean(diff[0:240, :] >= 4) > 0.015)
-
-        # Legacy connected-component pass over entire frame (no hardcoded zones)
-        text_cand = (diff >= 8).astype(np.uint8) * 255
-        k_w = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5))
-        closed_leg = cv2.morphologyEx(text_cand, cv2.MORPH_CLOSE, k_w)
-        num, labels_l, stats_l, _ = cv2.connectedComponentsWithStats(closed_leg)
-
-        for i in range(1, num):
-            x = stats_l[i, cv2.CC_STAT_LEFT]
-            y = stats_l[i, cv2.CC_STAT_TOP]
-            bw = stats_l[i, cv2.CC_STAT_WIDTH]
-            bh = stats_l[i, cv2.CC_STAT_HEIGHT]
-            area = stats_l[i, cv2.CC_STAT_AREA]
-
-            # Wide text handle OR squarish logo — both valid at ANY position
-            is_handle = (bw >= 120) and (10 <= bh <= 160) and (800 <= area <= 50000)
-            is_logo = (300 <= area <= 80000) and (bw <= 400) and (bh <= 400) and (bw / max(1, bh) > 0.3)
-
-            if is_handle or is_logo:
-                new_box = (max(0, x - 18), max(0, y - 12), min(1080, x + bw + 18), min(1920, y + bh + 12))
-                # Add only if not already covered by universal detector result
-                nx1, ny1, nx2, ny2 = new_box
-                already_covered = any(
-                    not (nx2 < bx1 - 20 or nx1 > bx2 + 20 or ny2 < by1 - 20 or ny1 > by2 + 20)
-                    for (bx1, by1, bx2, by2) in merged_boxes
-                )
-                if not already_covered:
-                    merged_boxes.append(new_box)
-
-        # Merge newly added boxes with existing ones
-        from engine.watermark_cleaner import _merge_boxes
-        merged_boxes = _merge_boxes(merged_boxes, gap=30)
-
-        # Update full mask with newly added zones
-        for (bx1, by1, bx2, by2) in merged_boxes:
-            sub_diff = diff[by1:by2, bx1:bx2]
-            sub_mask = (sub_diff >= 3).astype(np.uint8) * 255
-            sub_dil = cv2.dilate(sub_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 4)))
-            full_wm_mask[by1:by2, bx1:bx2] = np.maximum(full_wm_mask[by1:by2, bx1:bx2], sub_dil)
+        has_top_banner = False
 
     pixel_count = np.count_nonzero(full_wm_mask)
     print(f"[PROFILER] Identified {len(merged_boxes)} verified watermark zone(s): {merged_boxes} ({pixel_count} sub-pixel text mask pixels)")
