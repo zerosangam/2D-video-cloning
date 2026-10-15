@@ -27,6 +27,9 @@ def get_ffmpeg_binary():
     custom = os.environ.get("FFMPEG_EXE") or os.environ.get("FFMPEG_PATH")
     if custom and os.path.exists(custom):
         return custom
+    sys_ffmpeg = shutil.which("ffmpeg")
+    if sys_ffmpeg:
+        return sys_ffmpeg
     try:
         import imageio_ffmpeg
         exe = imageio_ffmpeg.get_ffmpeg_exe()
@@ -34,9 +37,6 @@ def get_ffmpeg_binary():
             return exe
     except Exception:
         pass
-    sys_ffmpeg = shutil.which("ffmpeg")
-    if sys_ffmpeg:
-        return sys_ffmpeg
     return "ffmpeg"
 
 def get_blender_binary():

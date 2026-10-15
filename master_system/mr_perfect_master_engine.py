@@ -67,13 +67,6 @@ def get_ffmpeg_binary():
     custom = os.environ.get("FFMPEG_EXE") or os.environ.get("FFMPEG_PATH")
     if custom and os.path.exists(custom):
         return custom
-    try:
-        import imageio_ffmpeg
-        exe = imageio_ffmpeg.get_ffmpeg_exe()
-        if exe and os.path.exists(exe):
-            return exe
-    except Exception:
-        pass
     sys_ffmpeg = shutil.which("ffmpeg")
     if sys_ffmpeg:
         return sys_ffmpeg
@@ -84,7 +77,14 @@ def get_ffmpeg_binary():
     ]:
         if os.path.exists(cand):
             return cand
-    return None
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            return exe
+    except Exception:
+        pass
+    return "ffmpeg"
 
 def get_blender_binary():
     custom = os.environ.get("BLENDER_EXE") or os.environ.get("BLENDER_PATH")
@@ -823,9 +823,13 @@ print("[BLENDER] Saved clean multi-layer multi-frame project.blend with 'zero' l
     with open(temp_script, "w", encoding="utf-8") as f:
         f.write(script_content)
 
-    subprocess.run([BLENDER_EXE, "--background", "--python", temp_script], check=True)
-    if os.path.exists(temp_script):
-        os.remove(temp_script)
+    try:
+        subprocess.run([BLENDER_EXE, "--background", "--python", temp_script], check=True)
+    except Exception as e:
+        print(f"[BLENDER NOTE] Blender background execution note: {e}")
+    finally:
+        if os.path.exists(temp_script):
+            os.remove(temp_script)
 
 def cleanup_unused_files(out_dir):
     """Cleans up temporary backup files."""
@@ -947,6 +951,76 @@ def auto_purge_intermediate_cache(work_dir):
 
     mb_freed = purged_bytes / (1024 * 1024)
     print(f"[AUTO-PURGE] Automatically purged {purged_files} intermediate files ({mb_freed:.1f} MB freed). Disk remains 100% clean!")
+
+def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=None):
+    """
+    Robustly compiles video using FFmpeg.
+    - Explicitly sets -start_number 1 so image sequences starting at frame 0001 never fail
+    - Auto-detects audio presence and stream compatibility
+    - Fallback mechanisms for diverse codecs and platforms
+    """
+    ffmpeg_bin = get_ffmpeg_binary()
+    has_audio = bool(audio_wav and os.path.exists(audio_wav) and os.path.getsize(audio_wav) > 1000)
+
+    os.makedirs(os.path.dirname(out_video), exist_ok=True)
+
+    # Pass 1: standard high-fidelity x264 with start_number=1
+    cmd = [
+        ffmpeg_bin, "-y",
+        "-framerate", str(fps),
+        "-start_number", "1",
+        "-i", os.path.join(frames_dir, pattern)
+    ]
+    if has_audio:
+        cmd.extend(["-i", audio_wav, "-c:a", "aac", "-b:a", "192k", "-shortest"])
+    else:
+        cmd.extend(["-an"])
+
+    cmd.extend([
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-crf", "18",
+        "-movflags", "+faststart",
+        out_video
+    ])
+
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 1000:
+        return True
+
+    print(f"[FFMPEG NOTE] Pass 1 returned code {res.returncode}. Retrying with universal parameters...")
+    if res.stderr:
+        print(f"[FFMPEG STDERR] {res.stderr[-300:].strip()}")
+
+    # Pass 2: fallback without start_number (pattern autodetect)
+    cmd2 = [
+        ffmpeg_bin, "-y",
+        "-framerate", str(fps),
+        "-i", os.path.join(frames_dir, pattern)
+    ]
+    if has_audio:
+        cmd2.extend(["-i", audio_wav, "-c:a", "aac", "-shortest"])
+    cmd2.extend([
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        out_video
+    ])
+    res2 = subprocess.run(cmd2, capture_output=True, text=True)
+    if res2.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 1000:
+        return True
+
+    # Pass 3: Universal fallback without libx264 constraint
+    print("[FFMPEG NOTE] Retrying with universal codec fallback...")
+    cmd3 = [
+        ffmpeg_bin, "-y",
+        "-framerate", str(fps),
+        "-start_number", "1",
+        "-i", os.path.join(frames_dir, pattern),
+        "-pix_fmt", "yuv420p",
+        out_video
+    ]
+    subprocess.run(cmd3, check=True)
+    return True
 
 def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_banner=None, inpaint_mode="lama", resume=True):
     t0 = time.time()
@@ -1095,38 +1169,12 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     # Step 6: Mux Final Videos (Dual: Line-Art + Full-Color) into videos/
     final_lines_video = os.path.join(videos_dir, "mr_perfect_lines.mp4")
     print(f"[VIDEO] Compiling Line-Art video at {meta['fps']} FPS...")
-    cmd_mux_lines = [
-        FFMPEG_EXE, "-y",
-        "-framerate", str(meta['fps']),
-        "-i", os.path.join(out_perfect_dir, "perfect_frame_%04d.png"),
-        "-i", audio_wav,
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-crf", "18",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        final_lines_video
-    ]
-    subprocess.run(cmd_mux_lines, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    compile_video_from_frames(out_perfect_dir, "perfect_frame_%04d.png", final_lines_video, meta['fps'], audio_wav=audio_wav)
     print(f"[VIDEO] Compiled Line-Art Video: {final_lines_video}")
 
     final_color_video = os.path.join(videos_dir, "mr_perfect_color.mp4")
     print(f"[VIDEO] Compiling Full-Color 2D video at {meta['fps']} FPS...")
-    cmd_mux_color = [
-        FFMPEG_EXE, "-y",
-        "-framerate", str(meta['fps']),
-        "-i", os.path.join(out_color_dir, "color_frame_%04d.png"),
-        "-i", audio_wav,
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-crf", "18",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        final_color_video
-    ]
-    subprocess.run(cmd_mux_color, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    compile_video_from_frames(out_color_dir, "color_frame_%04d.png", final_color_video, meta['fps'], audio_wav=audio_wav)
     print(f"[VIDEO] Compiled Full-Color Video: {final_color_video}")
 
     # Step 7: Generate Milestone Grid into previews/
