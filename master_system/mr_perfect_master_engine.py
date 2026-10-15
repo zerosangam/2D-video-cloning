@@ -268,6 +268,17 @@ def skeletonize_medial_axis(img_bin, max_iter=30):
 
 def extract_vector_splines_from_mask(mask, min_length=10, epsilon=1.2):
     """Converts binary line mask into simplified Douglas-Peucker vector curve points."""
+    if mask is None:
+        return []
+    if isinstance(mask, list):
+        return []
+    if not isinstance(mask, np.ndarray) or mask.size == 0 or mask.ndim < 2:
+        return []
+    if mask.dtype != np.uint8:
+        mask = mask.astype(np.uint8)
+    if cv2.countNonZero(mask) == 0:
+        return []
+
     cnts, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_TC89_KCOS)
     vector_strokes = []
     for c in cnts:
@@ -443,12 +454,13 @@ def process_single_frame_zero_blur(f_idx, in_dir, out_perfect_dir, out_color_dir
         colored_frame = np.zeros((1920, 1080, 3), dtype=np.uint8)
         cv2.imwrite(os.path.join(out_perfect_dir, f"perfect_frame_{f_idx:04d}.png"), canvas_all)
         cv2.imwrite(os.path.join(out_color_dir, f"color_frame_{f_idx:04d}.png"), colored_frame)
+        zero_mask = np.zeros((1920, 1080), dtype=np.uint8)
         return f_idx, {
-            "Character_1_Left": [],
-            "Character_2_Center": [],
-            "Character_3_Right": [],
-            "Layer_Props_Background": [],
-            "Composite_All": []
+            "Character_1_Left": zero_mask,
+            "Character_2_Center": zero_mask,
+            "Character_3_Right": zero_mask,
+            "Layer_Props_Background": zero_mask,
+            "Composite_All": zero_mask
         }
 
     # 1. Sample authentic background color from clean corner
@@ -1054,7 +1066,10 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
         if idx in keyframe_indices and masks_dict is not None:
             strokes_res = {}
             for l_name, mask in masks_dict.items():
-                strokes_res[l_name] = extract_vector_splines_from_mask(mask, min_length=10, epsilon=1.2)
+                if isinstance(mask, np.ndarray):
+                    strokes_res[l_name] = extract_vector_splines_from_mask(mask, min_length=10, epsilon=1.2)
+                else:
+                    strokes_res[l_name] = []
         return idx, strokes_res
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
