@@ -1,0 +1,56 @@
+{
+  "ink_outline": {
+    "hex": "#030302",
+    "rgb": [
+      3,
+      3,
+      2
+    ],
+    "description": "Pure dark charcoal/black ink line art (#0F0F0F)"
+  },
+  "shadow_secondary": {
+    "hex": "#646356",
+    "rgb": [
+      100,
+      99,
+      86
+    ],
+    "description": "Secondary shadows, desk outlines, furniture"
+  },
+  "clothing_props": {
+    "hex": "#249E86",
+    "rgb": [
+      36,
+      158,
+      134
+    ],
+    "description": "Character clothing, beanie hat, and skin tones"
+  },
+  "accent_surface": {
+    "hex": "#7E8273",
+    "rgb": [
+      126,
+      130,
+      115
+    ],
+    "description": "Wall accents, panel outlines"
+  },
+  "background_paper": {
+    "hex": "#A7A995",
+    "rgb": [
+      167,
+      169,
+      149
+    ],
+    "description": "Authentic warm paper canvas backdrop (#F5F3E9)"
+  },
+  "specular_highlight": {
+    "hex": "#D1D4C2",
+    "rgb": [
+      209,
+      212,
+      194
+    ],
+    "description": "Highlight marks, specular accents"
+  }
+}

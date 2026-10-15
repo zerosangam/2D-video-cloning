@@ -1,0 +1,28 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Intermediate project cache & logs
+cache/
+*.log
+
+# Large media files (prevents pushing heavy GB files to GitHub)
+input/*.mp4
+input/*.mov
+input/*.avi
+input/*.mkv
+output/videos/*.mp4
+output/blender/*.blend1
+output/blender/*.blend2
+
+# Editor & OS files
+.vscode/
+.DS_Store
+Thumbs.db

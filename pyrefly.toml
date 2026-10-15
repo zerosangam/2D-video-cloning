@@ -1,0 +1,72 @@
+project-includes = [
+    "**/*.py",
+]
+
+project-excludes = [
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/venv/**",
+    "stubs/**",
+    "bpy/**",
+    "mathutils/**",
+    "output/**",
+]
+
+python-interpreter-path = "C:\\Users\\SANGAM KUMAR\\AppData\\Local\\Python\\bin\\python.exe"
+
+site-package-path = [
+    "C:\\Users\\SANGAM KUMAR\\AppData\\Local\\Python\\pythoncore-3.15-64\\Lib\\site-packages"
+]
+
+search-path = [
+    "D:\\Blender",
+    "D:\\Blender\\engine",
+    "D:\\Blender\\master_system",
+    "D:\\Blender\\cache\\legacy_scripts",
+    "C:\\Users\\SANGAM KUMAR\\AppData\\Local\\Python\\pythoncore-3.15-64\\Lib\\site-packages"
+]
+
+replace-imports-with-any = [
+    "bpy",
+    "bpy.*",
+    "mathutils",
+    "mathutils.*",
+    "bmesh",
+    "bmesh.*",
+    "_bpy_types",
+    "bpy_extras",
+    "bpy_extras.*"
+]
+
+ignore-missing-imports = [
+    "*"
+]
+
+disable-type-errors-in-ide = true
+permissive-ignores = true
+
+[errors]
+missing-import = "ignore"
+missing-attribute = "ignore"
+missing-module-attribute = "ignore"
+no-matching-overload = "ignore"
+unknown-name = "ignore"
+invalid-literal = "ignore"
+invalid-syntax = "ignore"
+bad-argument-type = "ignore"
+bad-assignment = "ignore"
+bad-return = "ignore"
+unbound-name = "ignore"
+bad-override = "ignore"
+bad-override-param-name = "ignore"
+untyped-import = "ignore"
+implicit-any = "ignore"
+implicit-any-attribute = "ignore"
+unannotated-attribute = "ignore"
+unannotated-parameter = "ignore"
+unannotated-return = "ignore"
+not-callable = "ignore"
+not-iterable = "ignore"
+bad-index = "ignore"
+bad-argument-count = "ignore"
+unsupported-operation = "ignore"

@@ -1,0 +1,27 @@
+{
+  "include": [
+    "engine",
+    "master_system",
+    "start_cloning.py"
+  ],
+  "exclude": [
+    "stubs",
+    "bpy",
+    "mathutils",
+    "cache",
+    "output"
+  ],
+  "extraPaths": [
+    "D:/Blender",
+    "D:/Blender/bpy",
+    "D:/Blender/mathutils",
+    "C:/Users/SANGAM KUMAR/AppData/Local/Python/pythoncore-3.15-64/Lib/site-packages"
+  ],
+  "pythonPlatform": "Windows",
+  "pythonVersion": "3.15",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none",
+  "reportGeneralTypeIssues": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportAttributeAccessIssue": "none"
+}

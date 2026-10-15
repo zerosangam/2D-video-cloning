@@ -1,0 +1,37 @@
+{
+  "watermark_detected": true,
+  "watermark_boxes": [
+    [
+      427,
+      161,
+      661,
+      225
+    ],
+    [
+      364,
+      1331,
+      751,
+      1397
+    ],
+    [
+      330,
+      910,
+      730,
+      990
+    ],
+    [
+      280,
+      1100,
+      700,
+      1230
+    ]
+  ],
+  "watermark_pixel_count": 33828,
+  "top_banner_detected": true,
+  "resolution": [
+    2160,
+    3840
+  ],
+  "fps": 60.0,
+  "total_frames": 1681
+}
