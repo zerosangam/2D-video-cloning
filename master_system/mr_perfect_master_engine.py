@@ -1004,13 +1004,14 @@ def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=Non
     print(f"[FFMPEG] Step A complete: {os.path.getsize(tmp_video)//1024} KB silent video ready.")
 
     # ─────────────────────────────────────────────────────────────────────
-    # STEP B: Mux audio into encoded video via stream copy (no re-encode)
-    #   • -c:v copy  : no video re-encoding, finishes in seconds
-    #   • -c:a aac   : encode audio track only (small file, fast)
+    # STEP B: Mux audio into encoded video — 3-tier fallback, never silent
     # ─────────────────────────────────────────────────────────────────────
     if has_audio:
-        print(f"[FFMPEG] Step B: Muxing audio (stream copy — near instant)...")
-        cmd_mux = [
+        audio_mux_ok = False
+
+        # B-1: Stream copy + aac (fastest)
+        print(f"[FFMPEG] Step B-1: Muxing audio via stream-copy...")
+        cmd_mux1 = [
             ffmpeg_bin, "-y",
             "-i", tmp_video,
             "-i", audio_wav,
@@ -1021,18 +1022,75 @@ def compile_video_from_frames(frames_dir, pattern, out_video, fps, audio_wav=Non
             "-b:a", "192k",
             "-ar", "44100",
             "-ac", "2",
-            "-shortest",
             "-movflags", "+faststart",
             out_video
         ]
-        res_mux = subprocess.run(cmd_mux, capture_output=True, text=True)
-        if res_mux.returncode != 0 or not os.path.exists(out_video) or os.path.getsize(out_video) < 1000:
-            print(f"[FFMPEG] Step B mux failed (code {res_mux.returncode}) — using silent video as output.")
-            if res_mux.stderr:
-                print(f"[FFMPEG STDERR] {res_mux.stderr[-400:].strip()}")
-            shutil.copy2(tmp_video, out_video)
+        r1 = subprocess.run(cmd_mux1, capture_output=True, text=True)
+        if r1.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 1000:
+            print(f"[FFMPEG] Step B-1 SUCCESS — {os.path.getsize(out_video)//1024} KB (video + audio).")
+            audio_mux_ok = True
         else:
-            print(f"[FFMPEG] Step B audio mux SUCCESS — {os.path.getsize(out_video)//1024} KB with audio.")
+            print(f"[FFMPEG] Step B-1 failed (code {r1.returncode}). STDERR: {r1.stderr[-500:].strip()}")
+
+        # B-2: Re-encode video + aac with -async 1 (handles WAV timing drift)
+        if not audio_mux_ok:
+            print(f"[FFMPEG] Step B-2: Re-encode video with -async 1 audio sync...")
+            cmd_mux2 = [
+                ffmpeg_bin, "-y",
+                "-i", tmp_video,
+                "-i", audio_wav,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-threads", "2",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-ar", "44100",
+                "-ac", "2",
+                "-async", "1",
+                "-movflags", "+faststart",
+                out_video
+            ]
+            r2 = subprocess.run(cmd_mux2, capture_output=True, text=True)
+            if r2.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 1000:
+                print(f"[FFMPEG] Step B-2 SUCCESS — {os.path.getsize(out_video)//1024} KB (video + audio).")
+                audio_mux_ok = True
+            else:
+                print(f"[FFMPEG] Step B-2 failed (code {r2.returncode}). STDERR: {r2.stderr[-500:].strip()}")
+
+        # B-3: Direct encode from raw frames + audio in single pass (nuclear option)
+        if not audio_mux_ok:
+            print(f"[FFMPEG] Step B-3: Direct single-pass encode from frames + audio...")
+            cmd_mux3 = [
+                ffmpeg_bin, "-y",
+                "-framerate", str(fps),
+                "-start_number", "1",
+                "-i", os.path.join(frames_dir, pattern),
+                "-i", audio_wav,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-threads", "1",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-ar", "44100",
+                "-ac", "2",
+                "-async", "1",
+                out_video
+            ]
+            r3 = subprocess.run(cmd_mux3, capture_output=True, text=True)
+            if r3.returncode == 0 and os.path.exists(out_video) and os.path.getsize(out_video) > 1000:
+                print(f"[FFMPEG] Step B-3 SUCCESS — {os.path.getsize(out_video)//1024} KB (video + audio).")
+                audio_mux_ok = True
+            else:
+                print(f"[FFMPEG] Step B-3 failed (code {r3.returncode}). STDERR: {r3.stderr[-500:].strip()}")
+                # Absolute last resort — output silent video but log clearly
+                print(f"[FFMPEG] !! ALL MUX ATTEMPTS FAILED. Saving silent video (check logs above for audio error).")
+                shutil.copy2(tmp_video, out_video)
     else:
         # No audio: silent video is the final output
         shutil.move(tmp_video, out_video)
