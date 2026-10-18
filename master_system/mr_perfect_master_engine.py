@@ -382,7 +382,40 @@ def profile_video_universal(frames_dir, total_frames, sample_count=30):
 
     return full_wm_mask, merged_boxes, has_top_banner
 
+def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_art=False):
+    """
+    Stamps 'zerosangam' directly over the detected watermark location
+    to 100% conceal any residual artifacts and establish authentic original branding.
+    """
+    h, w = img.shape[:2]
+    tx, ty = None, None
+    if wm_boxes:
+        lower_boxes = [b for b in wm_boxes if b[1] > 300]
+        target_b = lower_boxes[0] if lower_boxes else wm_boxes[0]
+        bx1, by1, bx2, by2 = target_b
+        tx = int((bx1 + bx2) // 2)
+        ty = int((by1 + by2) // 2)
+    else:
+        tx = int(w * 0.72)
+        ty = int(h * 0.94)
+
+    font = cv2.FONT_HERSHEY_DUPLEX
+    scale = 0.85
+    thickness = 2
+    (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+
+    start_x = max(20, min(w - tw - 20, tx - tw // 2))
+    start_y = max(th + 20, min(h - 20, ty + th // 2))
+
+    if is_line_art:
+        cv2.putText(img, text, (start_x, start_y), font, scale, (15, 15, 15), thickness, cv2.LINE_AA)
+    else:
+        cv2.putText(img, text, (start_x + 1, start_y + 1), font, scale, (15, 15, 15), thickness + 2, cv2.LINE_AA)
+        cv2.putText(img, text, (start_x, start_y), font, scale, (245, 243, 233), thickness, cv2.LINE_AA)
+    return img
+
 def process_single_frame_zero_blur(f_idx, in_dir, out_perfect_dir, out_color_dir, full_wm_mask=None, wm_boxes=None, purge_top_banner=False, lama_model=None):
+
     """
     ZERO-BLUR Single Frame Processing (v9.0 Studio AI Edition):
     - LaMA Deep Learning inpainting: 100% elimination of watermarks and logos with zero smudge.
@@ -567,6 +600,7 @@ def process_single_frame_zero_blur(f_idx, in_dir, out_perfect_dir, out_color_dir
     # 8. Render Pure Line Art Canvas (Authentic Paper #F5F3E9, Pure Charcoal Ink #0F0F0F)
     canvas_all = np.full((1920, 1080, 3), (233, 243, 245), dtype=np.uint8)
     canvas_all[clean_all > 0] = (15, 15, 15)
+    stamp_zerosangam_signature(canvas_all, wm_boxes=wm_boxes, text="zerosangam", is_line_art=True)
 
     # 9. Render 1:1 Authentic Color Frame WITHOUT INPAINT BLUR
     smooth = cv2.bilateralFilter(img_clean, d=7, sigmaColor=60, sigmaSpace=60)
@@ -577,6 +611,8 @@ def process_single_frame_zero_blur(f_idx, in_dir, out_perfect_dir, out_color_dir
 
     colored_frame = flat_colors.copy()
     colored_frame[clean_all > 0] = (15, 15, 15)
+    stamp_zerosangam_signature(colored_frame, wm_boxes=wm_boxes, text="zerosangam", is_line_art=False)
+
 
     # Save output frames
     cv2.imwrite(os.path.join(out_perfect_dir, f"perfect_frame_{f_idx:04d}.png"), canvas_all)
