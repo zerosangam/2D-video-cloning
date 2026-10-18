@@ -5,12 +5,14 @@ MR. PERFECT AI 2D ANIMATION TELEGRAM BOT (HYPER NEURAL POWER MODE)
 Bot: @ai2Dcloningbot
 Features:
 1. Live Real-Time Terminal Progress & Timer updates in Telegram chat.
-2. ALWAYS runs in HYPER NEURAL MODE (LaMa AI Inpaint, zero shortcuts, maximum quality).
-3. 100% Watermark + Screen Text / Banner / Subtitle Overlay Elimination.
-4. Continuous AI Training: Mem0 Brain evolves & learns character styles on EVERY run.
-5. Dual Output Delivery: BOTH Line-Art and Full-Color 2D videos sent to Telegram.
-6. Cloudinary CDN Permanent Streaming / Download Links for both videos.
-7. Auto-Purge: Complete local disk cleanup (input & output deleted after cloud delivery).
+2. Threaded asynchronous pipeline worker (Telegram polling connection NEVER times out).
+3. Robust 300s HTTP timeouts + auto-reconnect against network hiccups.
+4. ALWAYS runs in HYPER NEURAL MODE (LaMa AI Inpaint, zero shortcuts, maximum quality).
+5. 100% Watermark + Screen Text / Banner / Subtitle Overlay Elimination.
+6. Continuous AI Training: Mem0 Brain evolves & learns character styles on EVERY run.
+7. Dual Output Delivery: BOTH Line-Art and Full-Color 2D videos sent to Telegram.
+8. Cloudinary CDN Permanent Streaming / Download Links for both videos.
+9. Auto-Purge: Complete local disk cleanup (input & output deleted after cloud delivery).
 ================================================================================
 """
 
@@ -41,6 +43,12 @@ from engine.memory_brain import AnimationMemoryBrain
 # Initialize environment
 load_dotenv()
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8757679341:AAG3jpgPlO9L7VX-A7FaxTP15lbSahGgqjU")
+
+# Configure high-reliability timeouts for large video streaming/delivery
+telebot.apihelper.CONNECT_TIMEOUT = 90
+telebot.apihelper.READ_TIMEOUT = 300  # 5 minutes upload window
+telebot.apihelper.SESSION_TIME_TO_LIVE = 600
+
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
 # Initialize Mem0 Memory Brain for continuous learning
@@ -56,6 +64,27 @@ def format_duration(seconds: float) -> str:
     mins = int(seconds // 60)
     secs = int(seconds % 60)
     return f"{mins:02d}m {secs:02d}s"
+
+def safe_edit_message(text: str, chat_id: int, message_id: int, max_retries: int = 3):
+    """Edits message with retry handling against temporary rate limits/timeouts."""
+    for attempt in range(max_retries):
+        try:
+            return bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
+        except Exception as e:
+            if "message is not modified" in str(e).lower():
+                return
+            time.sleep(1.5)
+
+def safe_send_video(chat_id: int, video_path: str, caption: str, max_retries: int = 3):
+    """Sends video file with multi-attempt retry on slow networks."""
+    for attempt in range(max_retries):
+        try:
+            with open(video_path, "rb") as vf:
+                return bot.send_video(chat_id, vf, caption=caption, timeout=300)
+        except Exception as e:
+            print(f"[Telegram Bot] Video delivery attempt {attempt+1} notice: {e}")
+            time.sleep(3)
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -97,11 +126,15 @@ def handle_video_url(message):
     os.makedirs(input_dir, exist_ok=True)
     local_input = os.path.join(input_dir, f"telegram_input_{int(time.time())}.mp4")
 
-    try:
-        download_video_from_cloud(url, local_input)
-        run_hyper_pipeline(local_input, chat_id, status_msg)
-    except Exception as e:
-        bot.edit_message_text(f"❌ *Download Error:*\n`{str(e)}`", chat_id=chat_id, message_id=status_msg.message_id)
+    def worker():
+        try:
+            download_video_from_cloud(url, local_input)
+            run_hyper_pipeline(local_input, chat_id, status_msg)
+        except Exception as e:
+            safe_edit_message(f"❌ *Download Error:*\n`{str(e)}`", chat_id, status_msg.message_id)
+
+    # Launch in background thread so Telegram connection never times out
+    threading.Thread(target=worker, daemon=True).start()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +154,7 @@ def handle_video_file(message):
         else:
             doc = message.document
             if not doc.file_name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
-                bot.edit_message_text("❌ Please send a valid video file (.mp4, .mov, .mkv).", chat_id=chat_id, message_id=status_msg.message_id)
+                safe_edit_message("❌ Please send a valid video file (.mp4, .mov, .mkv).", chat_id, status_msg.message_id)
                 return
             file_id = doc.file_id
             file_size = doc.file_size
@@ -129,16 +162,16 @@ def handle_video_file(message):
 
         # Check Telegram direct download threshold
         if file_size > 20 * 1024 * 1024:
-            bot.edit_message_text(
+            safe_edit_message(
                 f"⚠️ *File size is {file_size/(1024*1024):.1f} MB!*\n"
                 "Telegram direct download limit is 20MB for bots.\n\n"
                 "💡 *Solution:* Upload to Cloudinary or Google Drive and paste the direct link here. "
                 "The bot will stream-download it with zero size limits!",
-                chat_id=chat_id, message_id=status_msg.message_id
+                chat_id, status_msg.message_id
             )
             return
 
-        bot.edit_message_text("⬇️ Downloading video to AI workspace...", chat_id=chat_id, message_id=status_msg.message_id)
+        safe_edit_message("⬇️ Downloading video to AI workspace...", chat_id, status_msg.message_id)
         file_info = bot.get_file(file_id)
         downloaded_bytes = bot.download_file(file_info.file_path)
 
@@ -149,11 +182,15 @@ def handle_video_file(message):
         with open(local_input, "wb") as f:
             f.write(downloaded_bytes)
 
-        # Launch Hyper Pipeline
-        run_hyper_pipeline(local_input, chat_id, status_msg)
+        # Launch in background thread so Telegram connection never times out
+        threading.Thread(
+            target=run_hyper_pipeline,
+            args=(local_input, chat_id, status_msg),
+            daemon=True
+        ).start()
 
     except Exception as e:
-        bot.edit_message_text(f"❌ *Error:* `{str(e)}`", chat_id=chat_id, message_id=status_msg.message_id)
+        safe_edit_message(f"❌ *Error:* `{str(e)}`", chat_id, status_msg.message_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -210,12 +247,9 @@ def run_hyper_pipeline(video_path: str, chat_id: int, status_msg: types.Message)
             )
 
             if card != last_text and (now - last_edit_time) >= 3.0:
-                try:
-                    bot.edit_message_text(card, chat_id=chat_id, message_id=status_msg.message_id)
-                    last_text = card
-                    last_edit_time = now
-                except Exception:
-                    pass
+                safe_edit_message(card, chat_id, status_msg.message_id)
+                last_text = card
+                last_edit_time = now
 
     updater_thread = threading.Thread(target=live_telegram_updater, daemon=True)
     updater_thread.start()
@@ -223,7 +257,10 @@ def run_hyper_pipeline(video_path: str, chat_id: int, status_msg: types.Message)
     # Step 1: Mem0 Character Learning Query
     progress_state["stage"] = "🧠 Mem0 Brain Recall"
     progress_state["detail"] = "Querying character palettes & styles..."
-    recalled_profile = memory_brain.recall_character("hero_avatar")
+    try:
+        memory_brain.recall_character("hero_avatar")
+    except Exception:
+        pass
 
     # Step 2: Launch Subprocess in HYPER MODE (No --fast! Full LaMa neural inpainting + banner purge)
     runner_script = os.path.join(workspace_dir, "start_cloning.py")
@@ -292,10 +329,10 @@ def run_hyper_pipeline(video_path: str, chat_id: int, status_msg: types.Message)
     total_time_str = format_duration(t_total_sec)
 
     if process.returncode != 0:
-        bot.edit_message_text(
+        safe_edit_message(
             f"❌ *Pipeline Error:* The process exited with code {process.returncode}.\n"
             "Please check video format or inspect logs.",
-            chat_id=chat_id, message_id=status_msg.message_id
+            chat_id, status_msg.message_id
         )
         return
 
@@ -305,7 +342,7 @@ def run_hyper_pipeline(video_path: str, chat_id: int, status_msg: types.Message)
     out_color_video = os.path.join(videos_dir, "mr_perfect_color.mp4")
 
     if not os.path.exists(out_lines_video) and not os.path.exists(out_color_video):
-        bot.edit_message_text("❌ Render finished but output videos were not found on disk.", chat_id=chat_id, message_id=status_msg.message_id)
+        safe_edit_message("❌ Render finished but output videos were not found on disk.", chat_id, status_msg.message_id)
         return
 
     # Step 4: Mem0 Brain Continuous Learning Commit
@@ -321,9 +358,9 @@ def run_hyper_pipeline(video_path: str, chat_id: int, status_msg: types.Message)
         print(f"[Mem0 Brain] Learning update note: {me}")
 
     # Step 5: Upload BOTH Videos to Cloudinary CDN BEFORE any deletion
-    bot.edit_message_text(
+    safe_edit_message(
         "☁️ *Recreation Complete!* Uploading both videos to Cloudinary CDN...",
-        chat_id=chat_id, message_id=status_msg.message_id
+        chat_id, status_msg.message_id
     )
 
     cloud_lines_url = None
@@ -348,7 +385,7 @@ def run_hyper_pipeline(video_path: str, chat_id: int, status_msg: types.Message)
             print(f"[Cloudinary] Color video upload warning: {ce}")
 
     # Step 6: Deliver BOTH Videos & Cloud Links to Telegram
-    bot.edit_message_text("🚀 *Delivering 2D Animation Deliverables to Telegram...*", chat_id=chat_id, message_id=status_msg.message_id)
+    safe_edit_message("🚀 *Delivering 2D Animation Deliverables to Telegram...*", chat_id, status_msg.message_id)
 
     delivery_report = (
         "🎬 *2D VIDEO RECREATION COMPLETE (HYPER NEURAL MODE)* ⚡\n"
@@ -367,25 +404,26 @@ def run_hyper_pipeline(video_path: str, chat_id: int, status_msg: types.Message)
     if cloud_color_url:
         delivery_report += f"• [Stream/Download Full-Color Video]({cloud_color_url})\n"
 
-    # Send Video 1: Line Art
+    # Send Video 1: Line Art (with retry)
     if os.path.exists(out_lines_video) and lines_size_mb <= 50.0:
-        with open(out_lines_video, "rb") as vf:
-            bot.send_video(
-                chat_id, vf,
-                caption=f"✒️ *2D Single-Line Ink Art*\nSize: `{lines_size_mb:.2f} MB`\nTotal Time: `{total_time_str}`"
-            )
+        safe_send_video(
+            chat_id, out_lines_video,
+            caption=f"✒️ *2D Single-Line Ink Art*\nSize: `{lines_size_mb:.2f} MB`\nTotal Time: `{total_time_str}`"
+        )
 
-    # Send Video 2: Full Color 2D
+    # Send Video 2: Full Color 2D (with retry)
     if os.path.exists(out_color_video) and color_size_mb <= 50.0:
-        with open(out_color_video, "rb") as vf:
-            bot.send_video(
-                chat_id, vf,
-                caption=f"🎨 *2D Full-Color Animation*\nSize: `{color_size_mb:.2f} MB`\nTotal Time: `{total_time_str}`"
-            )
+        safe_send_video(
+            chat_id, out_color_video,
+            caption=f"🎨 *2D Full-Color Animation*\nSize: `{color_size_mb:.2f} MB`\nTotal Time: `{total_time_str}`"
+        )
 
     # Send Final Comprehensive Report with Cloud Links
-    bot.send_message(chat_id, delivery_report, disable_web_page_preview=False)
-    bot.delete_message(chat_id, status_msg.message_id)
+    try:
+        bot.send_message(chat_id, delivery_report, disable_web_page_preview=False)
+        bot.delete_message(chat_id, status_msg.message_id)
+    except Exception:
+        pass
 
     # Step 7: AUTOMATIC DISK CLEANUP (0 MB WASTE)
     print("\n[AUTO-PURGE] Initiating complete workspace disk cleanup...")
@@ -414,7 +452,7 @@ def run_hyper_pipeline(video_path: str, chat_id: int, status_msg: types.Message)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. BOT SERVICE RUNNER
+# 6. BOT SERVICE RUNNER (AUTO-RECONNECTING LOOP)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def start_bot():
@@ -429,7 +467,13 @@ def start_bot():
     print("Mem0 Brain:   ACTIVE (Learns on every video run)")
     print("Listening for messages and videos on Telegram...")
     print("=" * 70)
-    bot.infinity_polling(timeout=30, long_polling_timeout=30)
+    
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as err:
+            print(f"[Telegram Bot] Connection notice (auto-reconnecting in 3s): {err}")
+            time.sleep(3)
 
 
 if __name__ == "__main__":
