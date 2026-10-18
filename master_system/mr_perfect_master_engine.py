@@ -400,7 +400,8 @@ def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_ar
     - 100% concealment of any residual artifacts.
     """
     h, w = img.shape[:2]
-    target_w = 290
+    # Compact, non-intrusive watermark size (~18% of video width, ~32px tall)
+    target_w = 195
     tx, ty = None, None
 
     if wm_boxes:
@@ -410,11 +411,12 @@ def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_ar
         tx = int((bx1 + bx2) // 2)
         ty = int((by1 + by2) // 2)
         detected_w = bx2 - bx1
-        if detected_w > 250:
-            target_w = min(420, detected_w + 50)
+        if detected_w > 180:
+            target_w = min(280, detected_w + 25)
     else:
-        tx = int(w * 0.72)
+        tx = int(w * 0.84)
         ty = int(h * 0.94)
+
 
     badge = get_cached_badge_40()
     if badge is not None and badge.ndim == 3 and badge.shape[2] == 4:

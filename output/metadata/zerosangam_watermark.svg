@@ -1,16 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 280" width="980" height="280">
-  <!-- 100% Transparent Outside -->
-  <!-- Rounded Pill Badge: 40% Semi-Transparent Frosted Black Fill with 100% Opaque White Border -->
-  <rect x="7" y="7" width="966" height="266" rx="65" ry="65" 
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 115" width="700" height="115">
+  <!-- 100% Transparent Outside Canvas -->
+  <!-- Sleek, Compact Rounded Border (Tightly Hugging the Name with 40% Frosted Black Fill) -->
+  <rect x="3" y="3" width="694" height="109" rx="22" ry="22" 
         fill="#000000" fill-opacity="0.40" 
-        stroke="#FFFFFF" stroke-width="14" stroke-linejoin="round"/>
+        stroke="#FFFFFF" stroke-width="6" stroke-linejoin="round"/>
   
-  <!-- Exact Lowercase Typography: 100% Solid White zerosangam -->
-  <text x="490" y="185" 
+  <!-- Exact Lowercase Typography: zerosangam (Centered with Minimal Padding) -->
+  <text x="350" y="85" 
         font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" 
-        font-size="145" 
+        font-size="105" 
         font-weight="800" 
-        letter-spacing="-1px"
+        letter-spacing="-0.5px"
         fill="#FFFFFF" 
         text-anchor="middle" 
         dominant-baseline="alphabetic">zerosangam</text>
