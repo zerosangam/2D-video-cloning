@@ -83,6 +83,7 @@ def main():
         video_input = video_files[0]
 
     generate_blend = "--blend" in sys.argv
+    purge_banner = "--no-purge-banner" not in sys.argv  # True by default for 100% overlay removal
 
     out_dir = os.path.join(workspace_dir, "output")
     cache_dir = os.path.join(workspace_dir, "cache")
@@ -92,8 +93,10 @@ def main():
         cache_dir=cache_dir,
         inpaint_mode=inpaint_mode,
         resume=resume_flag,
+        purge_top_banner=purge_banner,
         generate_blend=generate_blend
     )
+
 
 if __name__ == "__main__":
     main()
