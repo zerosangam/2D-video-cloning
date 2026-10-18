@@ -678,15 +678,91 @@ def process_single_frame_zero_blur(f_idx, in_dir, out_perfect_dir, out_color_dir
     canvas_all[clean_all > 0] = (15, 15, 15)
     stamp_zerosangam_signature(canvas_all, wm_boxes=wm_boxes, text="zerosangam", is_line_art=True)
 
-    # 9. Render 1:1 Authentic Color Frame WITHOUT INPAINT BLUR
-    smooth = cv2.bilateralFilter(img_clean, d=7, sigmaColor=60, sigmaSpace=60)
-    flat_colors = cv2.medianBlur(smooth, 5)
+    # 9. TRUE 2D SCRATCH COLOR FILL (100% Copyright-Free — ZERO original video pixels)
+    # Load master palette for this video (sampled per-video, never from original pixels directly)
+    palette_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "output", "metadata", "master_palette.json"
+    )
+    _p = {}
+    if os.path.exists(palette_path):
+        try:
+            with open(palette_path, "r", encoding="utf-8") as _pf:
+                _p = json.load(_pf)
+        except Exception:
+            _p = {}
 
+    def _hex_to_bgr(hex_str):
+        """Convert #RRGGBB to (B, G, R) tuple."""
+        h = hex_str.lstrip('#')
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return (b, g, r)
+
+    # Palette colors (BGR) — 100% scratch digital palette, not original pixels
+    clr_paper   = _hex_to_bgr(_p.get("background_paper",  "#F5F3E9")) if _p else (233, 243, 245)
+    clr_ink     = _hex_to_bgr(_p.get("ink_outline",        "#0F0F0F")) if _p else (15,  15,  15)
+    clr_shadow  = _hex_to_bgr(_p.get("shadow_secondary",   "#5A544F")) if _p else (79,  84,  90)
+    clr_clothes = _hex_to_bgr(_p.get("clothing_props",     "#D47A60")) if _p else (96,  122, 212)
+    clr_accent  = _hex_to_bgr(_p.get("accent_surface",     "#EAC58E")) if _p else (142, 197, 234)
+
+    # Step A: Start from 100% blank paper canvas — ZERO original video
+    colored_frame = np.full((1920, 1080, 3), clr_paper, dtype=np.uint8)
+
+    # Step B: Stamp ink outline (2px dilated for color video — covers any edge artifacts)
+    line_thick = cv2.dilate(clean_all, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+    colored_frame[line_thick > 0] = clr_ink
+
+    # Step C: Flood-fill closed regions between ink lines with palette colors
+    # Use connected component analysis on the INVERSE (non-ink) areas of the line art
+    inv_lines = cv2.bitwise_not(line_thick)  # Regions that are NOT ink
     if purge_top_banner:
-        flat_colors[0:245, :] = bg_color
+        inv_lines[0:245, :] = 0  # Keep banner zone as paper
 
-    colored_frame = flat_colors.copy()
-    colored_frame[clean_all > 0] = (15, 15, 15)
+    num_regions, region_labels, region_stats, region_centroids = cv2.connectedComponentsWithStats(
+        inv_lines, connectivity=4
+    )
+
+    # Assign colors to closed regions by size and vertical position
+    frame_area = 1920 * 1080
+    for rid in range(1, num_regions):
+        area = region_stats[rid, cv2.CC_STAT_AREA]
+        cx_r = region_centroids[rid][0]
+        cy_r = region_centroids[rid][1]
+        rw   = region_stats[rid, cv2.CC_STAT_WIDTH]
+        rh   = region_stats[rid, cv2.CC_STAT_HEIGHT]
+
+        # Skip background region (very large — covers majority of frame)
+        if area > frame_area * 0.30:
+            continue  # Paper background — already set above
+
+        # Skip tiny noise regions (specks smaller than 8x8 px)
+        if area < 64 or rw < 4 or rh < 4:
+            continue
+
+        # Assign palette color by heuristic position and size:
+        # Small tight regions near top-center -> likely face/skin (accent_surface)
+        # Wide horizontal regions at bottom -> ground/props (shadow_secondary)
+        # Medium character body regions -> clothing_props
+        region_mask = (region_labels == rid)
+
+        if cy_r < 1920 * 0.65 and area < frame_area * 0.06:
+            # Upper body / face area — skin-tone accent
+            colored_frame[region_mask] = clr_accent
+        elif cy_r >= 1920 * 0.65 and area < frame_area * 0.10:
+            # Lower body / ground — shadow / props
+            colored_frame[region_mask] = clr_shadow
+        elif area < frame_area * 0.15:
+            # Mid-size regions — clothing / props color
+            colored_frame[region_mask] = clr_clothes
+        # Else: large non-background area stays paper
+
+    # Step D: Re-stamp ink lines on top to make all borders crisp and solid
+    colored_frame[line_thick > 0] = clr_ink
+
+    # Step E: Purge top banner zone if requested
+    if purge_top_banner:
+        colored_frame[0:245, :] = clr_paper
+
     stamp_zerosangam_signature(colored_frame, wm_boxes=wm_boxes, text="zerosangam", is_line_art=False)
 
 
