@@ -26,3 +26,13 @@ output/blender/*.blend2
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Secrets & Environment variables
+.env
+*.env
+
+# Temporary cloned repositories & databases
+temp_repos/
+*.db
+
+

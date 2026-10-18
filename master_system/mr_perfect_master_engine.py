@@ -794,12 +794,17 @@ print("[BLENDER] Saved clean multi-layer multi-frame project.blend with 'zero' l
             os.remove(temp_script)
 
 def cleanup_unused_files(out_dir):
-    """Cleans up temporary backup files."""
-    for root_dir in [out_dir, os.path.join(out_dir, "blender")]:
-        blend1 = os.path.join(root_dir, "project.blend1")
-        if os.path.exists(blend1):
+    """Ensures output directory only contains the clean videos/ folder."""
+    if not os.path.exists(out_dir):
+        return
+    for item in os.listdir(out_dir):
+        item_path = os.path.join(out_dir, item)
+        if item != "videos":
             try:
-                os.remove(blend1)
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path, ignore_errors=True)
+                else:
+                    os.remove(item_path)
             except Exception:
                 pass
 
@@ -1118,20 +1123,15 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(cache_dir, exist_ok=True)
 
-    # Establish clean dedicated deliverable directories (NO duplicate root files)
+    # Clean dedicated deliverable directory: ONLY videos/ in out_dir
     videos_dir = os.path.join(out_dir, "videos")
-    audio_dir = os.path.join(out_dir, "audio")
-    blender_dir = os.path.join(out_dir, "blender")
-    previews_dir = os.path.join(out_dir, "previews")
-    metadata_dir = os.path.join(out_dir, "metadata")
-    reports_dir = os.path.join(out_dir, "reports")
+    os.makedirs(videos_dir, exist_ok=True)
 
-    for d in [videos_dir, audio_dir, blender_dir, previews_dir, metadata_dir, reports_dir]:
-        os.makedirs(d, exist_ok=True)
-
-    audio_wav = os.path.join(audio_dir, "audio.wav")
+    # All intermediate files (audio, profile, palette, grid, splines) live in cache workspace
+    # so they are 100% automatically purged after video rendering.
     work_dir = os.path.join(cache_dir, "current_video_workspace")
     os.makedirs(work_dir, exist_ok=True)
+    audio_wav = os.path.join(work_dir, "audio.wav")
 
     print("=" * 70)
     print("   MR. PERFECT AI 2D MASTER ADVANCED ENGINE (v8.0 ZERO-BLUR)")
@@ -1141,7 +1141,7 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     meta = probe_video_stream(video_path)
     print(f"[PROBE] Video detected: {meta['orig_width']}x{meta['orig_height']} -> 1080x1920 @ {meta['fps']} FPS ({meta['duration_sec']}s)")
 
-    # Step 1: Ingestion & Anti-Copyright Audio Modulation (Saved in output/audio/)
+    # Step 1: Ingestion & Anti-Copyright Audio Modulation (Saved in cache/work_dir)
     frames_dir, audio_wav, total_frames = extract_video_assets(video_path, work_dir, meta, audio_wav=audio_wav)
 
     # Step 2: Universal Autonomous Video Profiler
@@ -1156,10 +1156,10 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
         "fps": meta['fps'],
         "total_frames": total_frames
     }
-    profile_path = os.path.join(metadata_dir, "video_profile.json")
+    profile_path = os.path.join(work_dir, "video_profile.json")
     with open(profile_path, "w", encoding="utf-8") as f:
         json.dump(profile_info, f, indent=2)
-    print(f"[PROFILER] Saved Video Profile: {profile_path}")
+    print(f"[PROFILER] Saved Video Profile (temp cache): {profile_path}")
 
     should_purge_banner = purge_top_banner if purge_top_banner is not None else detected_banner
     if should_purge_banner:
@@ -1170,10 +1170,10 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     # Step 3: Master Palette Extraction
     print("[PALETTE] Extracting 6-color Master Palette via K-Means...")
     palette = extract_master_palette(frames_dir, total_frames)
-    palette_path = os.path.join(metadata_dir, "master_palette.json")
+    palette_path = os.path.join(work_dir, "master_palette.json")
     with open(palette_path, "w", encoding="utf-8") as f:
         json.dump(palette, f, indent=2)
-    print(f"[PALETTE] Saved Master Palette: {palette_path}")
+    print(f"[PALETTE] Saved Master Palette (temp cache): {palette_path}")
 
     out_perfect_dir = os.path.join(work_dir, "mr_perfect_frames")
     out_color_dir = os.path.join(work_dir, "color_frames")
@@ -1264,49 +1264,29 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
     compile_video_from_frames(out_color_dir, "color_frame_%04d.png", final_color_video, meta['fps'], audio_wav=audio_wav, video_path=video_path)
     print(f"[VIDEO] Compiled Full-Color Video: {final_color_video}")
 
-    # Step 7: Generate Milestone Grid into previews/
-    grid_path = os.path.join(previews_dir, "mr_perfect_grid.jpg")
-    generate_milestone_grid(out_perfect_dir, out_color_dir, grid_path, total_frames)
+    # Step 7: Milestone Grid into temp work_dir (auto-purged with cache)
+    grid_path = os.path.join(work_dir, "mr_perfect_grid.jpg")
+    try:
+        generate_milestone_grid(out_perfect_dir, out_color_dir, grid_path, total_frames)
+    except Exception:
+        pass
 
-    # Step 8: Blender project generation (bypassed as requested by user)
-    blend_path = os.path.join(blender_dir, "project.blend")
-    if generate_blend:
-        print("[BLENDER] Building Blender project with multi-layer keyframe vector lines...")
-        build_blender_project(work_dir, blend_path, total_frames, meta['fps_int'], audio_wav, final_lines_video, kf_data_path)
-    else:
-        print("[BLENDER] Blender project generation skipped (Direct 2D video recreation mode active).")
+    # Step 8: Vector splines into temp work_dir (auto-purged with cache)
+    splines_path = os.path.join(work_dir, "vector_strokes.json")
+    try:
+        shutil.copy2(kf_data_path, splines_path)
+    except Exception:
+        pass
 
-    # Step 9: Save vector strokes JSON for export in metadata/
-    splines_path = os.path.join(metadata_dir, "vector_strokes.json")
-    shutil.copy2(kf_data_path, splines_path)
+    # Step 9: Blender project & Markdown report removed as requested by user.
 
-    # Step 10: Generate Execution Report in reports/
     t_total = time.time() - t0
     video_name = os.path.basename(video_path)
-    generate_report(reports_dir, total_frames, meta, meta['duration_sec'], final_lines_video, final_color_video, blend_path if generate_blend else "N/A", grid_path, palette_path, t_total, video_name=video_name)
 
-    # Step 11: Copy core deliverables to root output/ for convenient access
-    copy_items = [
-        (final_lines_video, "mr_perfect_lines.mp4"),
-        (final_color_video, "mr_perfect_color.mp4"),
-        (audio_wav, "audio.wav"),
-        (grid_path, "mr_perfect_grid.jpg"),
-        (palette_path, "master_palette.json"),
-        (os.path.join(reports_dir, "report.md"), "report.md")
-    ]
-    if generate_blend and os.path.exists(blend_path):
-        copy_items.append((blend_path, "project.blend"))
-
-    for src, dst_name in copy_items:
-        try:
-            shutil.copy2(src, os.path.join(out_dir, dst_name))
-        except Exception:
-            pass
-
-    # Step 12: Auto-Condense Knowledge to Skill & Master System (Text Rules)
+    # Step 10: Auto-Condense Knowledge to Skill & Master System (Text Rules)
     update_skill_and_blueprint_knowledge(base_proj_dir, video_name, meta, profile_info, palette, total_frames, t_total)
 
-    # Step 13: Verify both output videos exist and have embedded audio stream
+    # Step 11: Verify both output videos exist and have embedded audio stream
     def get_audio_info(v_path):
         try:
             r = subprocess.run([ffmpeg_bin, "-i", v_path], capture_output=True, text=True)
@@ -1338,8 +1318,8 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
         print(f"[OUTPUT] ✗ WARNING: Color 2D video missing or empty!")
 
 
-    # Step 14: Auto-Purge ALL intermediate cache to free disk space
-    #   Purge entire work_dir (raw frames, processed frames, tmp files)
+    # Step 12: Auto-Purge ALL intermediate cache to free disk space
+    #   Purges entire work_dir (raw frames, processed frames, audio.wav, grid, profile, palette, keyframes)
     #   ONLY after both videos are confirmed on disk.
     if lines_ok or color_ok:
         print(f"[AUTO-PURGE] Clearing entire workspace cache: {work_dir}")
@@ -1360,26 +1340,20 @@ def run_mr_perfect_pipeline(video_path, out_dir=None, cache_dir=None, purge_top_
                 except Exception:
                     pass
             mb_freed = purged_bytes / (1024 * 1024)
-            print(f"[AUTO-PURGE] ✓ Purged {purged_files} files ({mb_freed:.1f} MB freed) — disk clean!")
+            print(f"[AUTO-PURGE] ✓ Purged {purged_files} files ({mb_freed:.1f} MB freed) — cache 100% clean!")
         except Exception as e:
             print(f"[AUTO-PURGE] Note: cache purge partially failed: {e}")
     else:
         print("[AUTO-PURGE] Skipping cache purge — output videos not verified. Cache preserved for retry.")
 
-    # Step 15: Clean up workspace backup files
+    # Step 13: Clean up workspace to ensure only output/videos remains
     cleanup_unused_files(out_dir)
-
 
     print("=" * 70)
     print(f"PIPELINE COMPLETED IN {t_total:.2f} SECONDS ({t_total/60:.2f} MINS)!")
     print(f"Line Art Video:  {final_lines_video} [Video + Audio COMBINED in 1 file]")
     print(f"Color 2D Video:  {final_color_video} [Video + Audio COMBINED in 1 file]")
-    print(f"Deliverable:     {os.path.join(out_dir, 'mr_perfect_color.mp4')}")
-    print(f"Blender Project: {blend_path}")
-    print(f"Milestone Grid:  {grid_path}")
-    print(f"Color Palette:   {palette_path}")
-    print(f"Vector Splines:  {splines_path}")
-    print(f"Report:          {os.path.join(reports_dir, 'report.md')}")
+    print(f"Output Directory: {videos_dir} [Clean — Only 2 Deliverable Videos]")
     print("=" * 70)
 
 if __name__ == "__main__":
