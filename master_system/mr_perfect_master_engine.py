@@ -441,17 +441,17 @@ def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_ar
         bh_badge, bw_badge = badge.shape[:2]
         aspect = bw_badge / max(1, bh_badge)
 
-        # Scale badge to comfortably cover the original watermark with a sleek, compact profile
-        target_w = max(160, min(290, bw + 18))
-        target_h = max(24, int(target_w / aspect))
+        # Scale badge to compact size (~105px wide, half size of previous 195px)
+        target_w = max(100, min(160, bw + 10))
+        target_h = max(18, int(target_w / aspect))
 
-        # Ensure badge covers the height of original watermark
-        if target_h < bh + 8:
-            target_h = min(72, bh + 8)
-            target_w = min(320, int(target_h * aspect))
+        # Ensure badge covers the height of original watermark if needed
+        if target_h < bh + 4:
+            target_h = min(40, bh + 4)
+            target_w = min(180, int(target_h * aspect))
 
-        start_x = max(8, min(w - target_w - 8, cx - target_w // 2))
-        start_y = max(8, min(h - target_h - 8, cy - target_h // 2))
+        start_x = max(6, min(w - target_w - 6, cx - target_w // 2))
+        start_y = max(6, min(h - target_h - 6, cy - target_h // 2))
         end_x = start_x + target_w
         end_y = start_y + target_h
 
@@ -465,14 +465,14 @@ def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_ar
         img[start_y:end_y, start_x:end_x] = np.clip(blended, 0, 255).astype(np.uint8)
         return img
 
-    # Fallback: pure white text on 40% translucent black pill (ZERO white border)
+    # Fallback: pure white text on 40% translucent black pill (ZERO white border, compact ~105px)
     font = cv2.FONT_HERSHEY_DUPLEX
-    scale = 0.70
-    thickness = 2
+    scale = 0.42
+    thickness = 1
     (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
 
-    target_w = tw + 24
-    target_h = th + 16
+    target_w = tw + 16
+    target_h = th + 10
     start_x = max(8, min(w - target_w - 8, cx - target_w // 2))
     start_y = max(8, min(h - target_h - 8, cy - target_h // 2))
     end_x = start_x + target_w
