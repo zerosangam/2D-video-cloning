@@ -382,22 +382,57 @@ def profile_video_universal(frames_dir, total_frames, sample_count=30):
 
     return full_wm_mask, merged_boxes, has_top_banner
 
+_CACHED_BADGE_40 = None
+
+def get_cached_badge_40():
+    global _CACHED_BADGE_40
+    if _CACHED_BADGE_40 is None:
+        badge_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output", "metadata", "zerosangam_glass_40.png")
+        if os.path.exists(badge_path):
+            _CACHED_BADGE_40 = cv2.imread(badge_path, cv2.IMREAD_UNCHANGED)
+    return _CACHED_BADGE_40
+
 def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_art=False):
     """
-    Stamps 'zerosangam' directly over the detected watermark location
-    to 100% conceal any residual artifacts and establish authentic original branding.
+    Stamps 'zerosangam' directly over the detected watermark location with:
+    - 40% semi-transparent frosted black fill (animation is visible through it).
+    - 100% opaque white text and rounded border.
+    - 100% concealment of any residual artifacts.
     """
     h, w = img.shape[:2]
+    target_w = 290
     tx, ty = None, None
+
     if wm_boxes:
         lower_boxes = [b for b in wm_boxes if b[1] > 300]
         target_b = lower_boxes[0] if lower_boxes else wm_boxes[0]
         bx1, by1, bx2, by2 = target_b
         tx = int((bx1 + bx2) // 2)
         ty = int((by1 + by2) // 2)
+        detected_w = bx2 - bx1
+        if detected_w > 250:
+            target_w = min(420, detected_w + 50)
     else:
         tx = int(w * 0.72)
         ty = int(h * 0.94)
+
+    badge = get_cached_badge_40()
+    if badge is not None and badge.ndim == 3 and badge.shape[2] == 4:
+        target_h = max(20, int(badge.shape[0] * (target_w / badge.shape[1])))
+        badge_res = cv2.resize(badge, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
+        start_x = max(10, min(w - target_w - 10, tx - target_w // 2))
+        start_y = max(10, min(h - target_h - 10, ty - target_h // 2))
+        end_x = start_x + target_w
+        end_y = start_y + target_h
+
+        alpha = (badge_res[:, :, 3] / 255.0)[:, :, np.newaxis]
+        roi = img[start_y:end_y, start_x:end_x].astype(float)
+        b_rgb = badge_res[:, :, :3].astype(float)
+
+        blended = (alpha * b_rgb + (1.0 - alpha) * roi)
+        img[start_y:end_y, start_x:end_x] = np.clip(blended, 0, 255).astype(np.uint8)
+        return img
 
     font = cv2.FONT_HERSHEY_DUPLEX
     scale = 0.85
@@ -413,6 +448,7 @@ def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_ar
         cv2.putText(img, text, (start_x + 1, start_y + 1), font, scale, (15, 15, 15), thickness + 2, cv2.LINE_AA)
         cv2.putText(img, text, (start_x, start_y), font, scale, (245, 243, 233), thickness, cv2.LINE_AA)
     return img
+
 
 def process_single_frame_zero_blur(f_idx, in_dir, out_perfect_dir, out_color_dir, full_wm_mask=None, wm_boxes=None, purge_top_banner=False, lama_model=None):
 
