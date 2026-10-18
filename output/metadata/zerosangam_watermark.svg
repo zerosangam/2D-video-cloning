@@ -1,15 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 115" width="700" height="115">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 555 92" width="555" height="92">
   <!-- 100% Transparent Outside Canvas -->
-  <!-- Sleek, Compact Rounded Border (Tightly Hugging the Name with 40% Frosted Black Fill) -->
-  <rect x="3" y="3" width="694" height="109" rx="22" ry="22" 
+  <!-- BORDERLESS 40% Frosted Black Rounded Pill Backdrop -->
+  <rect x="0" y="0" width="555" height="92" rx="25" ry="25" 
         fill="#000000" fill-opacity="0.40" 
-        stroke="#FFFFFF" stroke-width="6" stroke-linejoin="round"/>
+        stroke="none"/>
   
-  <!-- Exact Lowercase Typography: zerosangam (Centered with Minimal Padding) -->
-  <text x="350" y="85" 
+  <!-- Exact Lowercase Typography: 100% Pure White zerosangam -->
+  <text x="277" y="69" 
         font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" 
-        font-size="105" 
-        font-weight="800" 
+        font-size="88" 
+        font-weight="700" 
         letter-spacing="-0.5px"
         fill="#FFFFFF" 
         text-anchor="middle" 

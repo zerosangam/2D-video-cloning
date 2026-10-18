@@ -383,73 +383,111 @@ def profile_video_universal(frames_dir, total_frames, sample_count=30):
     return full_wm_mask, merged_boxes, has_top_banner
 
 _CACHED_BADGE_40 = None
+_CACHED_BADGE_MTIME = 0
 
 def get_cached_badge_40():
-    global _CACHED_BADGE_40
-    if _CACHED_BADGE_40 is None:
-        badge_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output", "metadata", "zerosangam_glass_40.png")
-        if os.path.exists(badge_path):
+    global _CACHED_BADGE_40, _CACHED_BADGE_MTIME
+    badge_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output", "metadata", "zerosangam_glass_40.png")
+    if os.path.exists(badge_path):
+        mtime = os.path.getmtime(badge_path)
+        if _CACHED_BADGE_40 is None or mtime != _CACHED_BADGE_MTIME:
             _CACHED_BADGE_40 = cv2.imread(badge_path, cv2.IMREAD_UNCHANGED)
+            _CACHED_BADGE_MTIME = mtime
     return _CACHED_BADGE_40
 
-def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_art=False):
+def stamp_zerosangam_signature(img, wm_boxes=None, text="zerosangam", is_line_art=False, auto_mode=True):
     """
-    Stamps 'zerosangam' directly over the detected watermark location with:
-    - 40% semi-transparent frosted black fill (animation is visible through it).
-    - 100% opaque white text and rounded border.
-    - 100% concealment of any residual artifacts.
+    Universal Video Auto-Placement Mode:
+    - Auto Mode: If an original watermark was detected in the video (wm_boxes),
+      stamps the 'zerosangam' badge directly over the exact detected coordinates (cx, cy)
+      to 100% conceal any residual inpaint artifacts.
+    - If NO original watermark was detected (clean video), auto mode leaves the video untouched.
+    - Design: Pure white bold text with a 40% translucent frosted black pill and ZERO white border.
     """
-    h, w = img.shape[:2]
-    # Compact, non-intrusive watermark size (~18% of video width, ~32px tall)
-    target_w = 195
-    tx, ty = None, None
-
+    # 1. Filter valid watermark boxes (skip full-width top banners which are purged separately)
+    valid_boxes = []
     if wm_boxes:
-        lower_boxes = [b for b in wm_boxes if b[1] > 300]
-        target_b = lower_boxes[0] if lower_boxes else wm_boxes[0]
-        bx1, by1, bx2, by2 = target_b
-        tx = int((bx1 + bx2) // 2)
-        ty = int((by1 + by2) // 2)
-        detected_w = bx2 - bx1
-        if detected_w > 180:
-            target_w = min(280, detected_w + 25)
-    else:
-        tx = int(w * 0.84)
-        ty = int(h * 0.94)
+        for b in wm_boxes:
+            bx1, by1, bx2, by2 = b
+            bw = bx2 - bx1
+            bh = by2 - by1
+            if by1 < 250 and bw > 600:
+                continue
+            if bw < 25 or bh < 8:
+                continue
+            valid_boxes.append(b)
 
+    # 2. Auto Mode: if no original watermark was present in the video, keep video clean
+    if not valid_boxes:
+        if auto_mode:
+            return img
+        h, w = img.shape[:2]
+        valid_boxes = [(int(w * 0.72), int(h * 0.90), int(w * 0.96), int(h * 0.95))]
 
+    h, w = img.shape[:2]
     badge = get_cached_badge_40()
-    if badge is not None and badge.ndim == 3 and badge.shape[2] == 4:
-        target_h = max(20, int(badge.shape[0] * (target_w / badge.shape[1])))
-        badge_res = cv2.resize(badge, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
-        start_x = max(10, min(w - target_w - 10, tx - target_w // 2))
-        start_y = max(10, min(h - target_h - 10, ty - target_h // 2))
+    # Target the primary original watermark location (largest area)
+    valid_boxes.sort(key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
+    target_box = valid_boxes[0]
+    bx1, by1, bx2, by2 = target_box
+
+    bw = bx2 - bx1
+    bh = by2 - by1
+    cx = int((bx1 + bx2) // 2)
+    cy = int((by1 + by2) // 2)
+
+    if badge is not None and badge.ndim == 3 and badge.shape[2] == 4:
+        bh_badge, bw_badge = badge.shape[:2]
+        aspect = bw_badge / max(1, bh_badge)
+
+        # Scale badge to comfortably cover the original watermark with a sleek, compact profile
+        target_w = max(160, min(290, bw + 18))
+        target_h = max(24, int(target_w / aspect))
+
+        # Ensure badge covers the height of original watermark
+        if target_h < bh + 8:
+            target_h = min(72, bh + 8)
+            target_w = min(320, int(target_h * aspect))
+
+        start_x = max(8, min(w - target_w - 8, cx - target_w // 2))
+        start_y = max(8, min(h - target_h - 8, cy - target_h // 2))
         end_x = start_x + target_w
         end_y = start_y + target_h
+
+        badge_res = cv2.resize(badge, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
         alpha = (badge_res[:, :, 3] / 255.0)[:, :, np.newaxis]
         roi = img[start_y:end_y, start_x:end_x].astype(float)
         b_rgb = badge_res[:, :, :3].astype(float)
 
-        blended = (alpha * b_rgb + (1.0 - alpha) * roi)
+        blended = alpha * b_rgb + (1.0 - alpha) * roi
         img[start_y:end_y, start_x:end_x] = np.clip(blended, 0, 255).astype(np.uint8)
         return img
 
+    # Fallback: pure white text on 40% translucent black pill (ZERO white border)
     font = cv2.FONT_HERSHEY_DUPLEX
-    scale = 0.85
+    scale = 0.70
     thickness = 2
     (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
 
-    start_x = max(20, min(w - tw - 20, tx - tw // 2))
-    start_y = max(th + 20, min(h - 20, ty + th // 2))
+    target_w = tw + 24
+    target_h = th + 16
+    start_x = max(8, min(w - target_w - 8, cx - target_w // 2))
+    start_y = max(8, min(h - target_h - 8, cy - target_h // 2))
+    end_x = start_x + target_w
+    end_y = start_y + target_h
 
-    if is_line_art:
-        cv2.putText(img, text, (start_x, start_y), font, scale, (15, 15, 15), thickness, cv2.LINE_AA)
-    else:
-        cv2.putText(img, text, (start_x + 1, start_y + 1), font, scale, (15, 15, 15), thickness + 2, cv2.LINE_AA)
-        cv2.putText(img, text, (start_x, start_y), font, scale, (245, 243, 233), thickness, cv2.LINE_AA)
+    # 40% black pill backdrop (alpha = 0.40)
+    roi = img[start_y:end_y, start_x:end_x].astype(float)
+    img[start_y:end_y, start_x:end_x] = (roi * 0.60).astype(np.uint8)
+
+    # Pure white text centered inside pill (ZERO white border)
+    text_x = start_x + (target_w - tw) // 2
+    text_y = start_y + target_h - (target_h - th) // 2 - 2
+    cv2.putText(img, text, (text_x, text_y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
     return img
+
 
 
 def process_single_frame_zero_blur(f_idx, in_dir, out_perfect_dir, out_color_dir, full_wm_mask=None, wm_boxes=None, purge_top_banner=False, lama_model=None):
